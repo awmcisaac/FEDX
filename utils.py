@@ -192,7 +192,7 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
     # Train linear layer (fix the backbone network)
     for epoch in range(1, 101):
         for data, target in linear_loader:
-            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True).type(torch.long)
             out = linear_net(data)
             loss = loss_criterion(out, target)
 
