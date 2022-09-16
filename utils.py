@@ -35,8 +35,8 @@ def mkdirs(dirpath):
 
 
 def set_logger(args):
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+    # for handler in logging.root.handlers[:]:
+    #     logging.root.removeHandler(handler)
 
     args.log_file_name = (
         f"{args.dataset}-{args.batch_size}-{args.n_parties}-{args.temperature}-{args.tt}-{args.ts}-{args.epochs}_log-%s"
@@ -47,12 +47,12 @@ def set_logger(args):
         filename=os.path.join(args.logdir, log_path),
         format="%(asctime)s %(levelname)-8s %(message)s",
         datefmt="%m-%d %H:%M",
-        level=logging.DEBUG,
+        level=logging.INFO,
         filemode="w",
     )
 
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     return logger
 
 

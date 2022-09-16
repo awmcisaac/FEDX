@@ -13,12 +13,18 @@ import random
 import numpy as np
 import torch
 import torch.optim as optim
-
+import wandb
+import pandas as pd
+import copy
 from losses import js_loss, nt_xent
 from model import init_nets
 from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
+
+
+record_data = None
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -26,10 +32,10 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="cifar10", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
-    parser.add_argument("--batch-size", type=int, default=128, help="total sum of input batch size for training (default: 128)")
+    parser.add_argument("--batch-size", type=int, default=1000, help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
-    parser.add_argument("--epochs", type=int, default=10, help="number of local epochs")
-    parser.add_argument("--n_parties", type=int, default=10, help="number of workers in a distributed cluster")
+    parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
+    parser.add_argument("--n_parties", type=int, default=1, help="number of workers in a distributed cluster")
     parser.add_argument("--comm_round", type=int, default=100, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
@@ -47,6 +53,9 @@ def get_args():
     parser.add_argument("--ts", type=float, default=0.1, help="the temperature parameter for js loss in student model")
     parser.add_argument("--sample_fraction", type=float, default=1.0, help="how many clients are sampled in each round")
     args = parser.parse_args()
+
+    global record_data
+    record_data = pd.DataFrame([], columns=[i for i in range(args.out_dim)])
     return args
 
 
@@ -74,7 +83,7 @@ def train_net_fedx(
     device="cpu",
 ):
     net.cuda()
-    global_net.cuda()
+    # global_net.cuda()
     logger.info("Training network %s" % str(net_id))
     logger.info("n_training: %d" % len(train_dataloader))
     logger.info("n_test: %d" % len(test_dataloader))
@@ -91,7 +100,7 @@ def train_net_fedx(
             filter(lambda p: p.requires_grad, net.parameters()), lr=lr, momentum=0.9, weight_decay=args.reg
         )
     net.train()
-    global_net.eval()
+    # global_net.eval()
 
     # Random dataloader for relational loss
     random_loader = copy.deepcopy(train_dataloader)
@@ -113,22 +122,29 @@ def train_net_fedx(
 
             all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
             _, proj1, pred1 = net(all_x)
-            with torch.no_grad():
-                _, proj2, pred2 = global_net(all_x)
+            # with torch.no_grad():
+            #     _, proj2, pred2 = global_net(all_x)
 
             pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-            proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
 
             # Contrastive losses (local, global)
+
+            f_tep = proj1_original.detach()
+            u, s, v = torch.svd(f_tep)
+            global record_data
+            record_data.loc[str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
             nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
-            nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
-            loss_nt = nt_local + nt_global
+            # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
+            # loss_nt = nt_local + nt_global
+            loss_nt = nt_local
 
             # Relational losses (local, global)
-            js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
+            # js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
             js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
-            loss_js = js_global + js_local
+            # loss_js = js_global + js_local
+            loss_js = js_local
 
             loss = loss_nt + loss_js
             loss.backward()
@@ -187,8 +203,8 @@ def local_train_net(
 
 
 if __name__ == "__main__":
+    wandb.init(project='fed_unsupervised', name='trial', entity='joey61')
     args = get_args()
-
     # Create directory to save log and model
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
@@ -240,9 +256,10 @@ if __name__ == "__main__":
     # Initializing net from each local party.
     logger.info("Initializing nets")
     nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
-    global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
+    global_model = None
+    # global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
 
-    global_model = global_models[0]
+    # global_model = global_models[0]
     n_comm_rounds = args.comm_round
 
     train_dl_local_dict = {}
@@ -267,10 +284,10 @@ if __name__ == "__main__":
         party_list_this_round = party_list_rounds[round]
 
         # Download global model from (virtual) central server
-        global_w = global_model.state_dict()
+        # global_w = global_model.state_dict()
         nets_this_round = {k: nets[k] for k in party_list_this_round}
-        for net in nets_this_round.values():
-            net.load_state_dict(global_w)
+        # for net in nets_this_round.values():
+        #     net.load_state_dict(global_w)
 
         # Train local model with local data
         local_train_net(
@@ -283,29 +300,33 @@ if __name__ == "__main__":
             test_dl=test_dl,
             global_model=global_model,
             device=device,
+            round=round
         )
 
         total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
         fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
 
         # Averaging the local models' parameters to get global model
-        for net_id, net in enumerate(nets_this_round.values()):
-            net_para = net.state_dict()
-            if net_id == 0:
-                for key in net_para:
-                    global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-            else:
-                for key in net_para:
-                    global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+        # for net_id, net in enumerate(nets_this_round.values()):
+        #     net_para = net.state_dict()
+        #     if net_id == 0:
+        #         for key in net_para:
+        #             global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+        #     else:
+        #         for key in net_para:
+        #             global_w[key] += net_para[key] * fed_avg_freqs[net_id]
 
-        global_model.load_state_dict(copy.deepcopy(global_w))
-        global_model.cuda()
+
+        # global_model.load_state_dict(copy.deepcopy(global_w))
+        # global_model.cuda()
 
         # Evaluating the global model
-        test_acc_1, test_acc_5 = test_linear_fedX(global_model, val_dl_global, test_dl)
+        test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
         logger.info(">> Global Model Test accuracy Top1: %f" % test_acc_1)
         logger.info(">> Global Model Test accuracy Top5: %f" % test_acc_5)
 
     # Save the final round's local and global models
     torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
     torch.save(nets[0].state_dict(), args.modeldir + "localmodel0" + args.log_file_name + ".pth")
+    global record_data
+    record_data.to_csv('data.csv')
