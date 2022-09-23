@@ -67,7 +67,6 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
     random.seed(seed)
 
-
 def train_net_fedx(
     net_id,
     net,
@@ -156,14 +155,14 @@ def train_net_fedx(
             # loss_js = js_global + js_local
             loss_js = js_local
 
-            # loss_supervised = ce_loss(pred1_original, target)
+            loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
-            loss = loss_nt + loss_js
+            loss = loss_nt + loss_js + loss_supervised
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
-        torch.save(feature_all,'./ckpt_unsupervised/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
+        torch.save(feature_all,'./ckpt_false_supervised/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
 
@@ -212,12 +211,11 @@ def local_train_net(
 
     if global_model:
         global_model.to("cpu")
-
     return nets
 
 
 if __name__ == "__main__":
-    wandb.init(project='fed_unsupervised', name='trial', entity='joey61')
+    wandb.init(project='fed_false_supervised', name='trial', entity='joey61')
     args = get_args()
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -279,15 +277,25 @@ if __name__ == "__main__":
     train_dl_local_dict = {}
     val_dl_local_dict = {}
     net_id = 0
+    permute_record = list(range(10))
+    np.random.shuffle(permute_record)
+    def target_transform(label):
+        label = permute_record[label]
+        return label
 
     # Distribute dataset and dataloader to each local party
     # We use two dataloaders for training FedX (train_dataloader, random_dataloader), 
     # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
     for net in nets:
         dataidxs = net_dataidx_map[net_id]
-        train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-            args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
-        )
+        if net_id ==0:
+            train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+                args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
+            )
+        else:
+            train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+                args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
+            )
         train_dl_local_dict[net_id] = train_dl_local
         val_dl_local_dict[net_id] = val_dl_local
         net_id += 1

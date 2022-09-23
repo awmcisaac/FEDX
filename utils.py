@@ -215,7 +215,7 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
     return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
 
 
-def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_level=0):
+def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_level=0, target_transform = None):
     if dataset == "cifar10":
         dl_obj = CIFAR10_truncated
 
@@ -251,6 +251,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
             train=True,
             transform=transform_train,
             download=True,
+            target_transform=target_transform
         )
         val_ds = dl_obj(
             datadir,
@@ -258,6 +259,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
             train=True,
             transform=transform_test,
             download=False,
+            target_transform=target_transform
         )
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
 

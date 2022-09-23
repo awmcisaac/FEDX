@@ -17,7 +17,7 @@ def nt_xent(x1, x2, t=0.1):
     mask = (torch.ones_like(sim_matrix) - torch.eye(2 * batch_size, device=sim_matrix.device)).bool()
     sim_matrix = sim_matrix.masked_select(mask).view(2 * batch_size, -1)
     pos_sim = torch.exp(torch.sum(x1 * x2, dim=-1) / t)
-    _sim = torch.cat([pos_sim, pos_sim], dim=0)
+    pos_sim = torch.cat([pos_sim, pos_sim], dim=0)
     loss = (-torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
     return loss
 
