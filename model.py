@@ -39,9 +39,9 @@ class ModelFedX(nn.Module):
         )
 
         self.predictionMLP = nn.Sequential(
-            nn.Linear(out_dim, out_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(out_dim, out_dim),
+            nn.Linear(out_dim, 10),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(out_dim, out_dim),
         )
 
     def _get_basemodel(self, model_name):

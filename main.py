@@ -23,8 +23,8 @@ import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-record_data = None
-
+# record_data = None
+# matrix_data = None
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -35,8 +35,8 @@ def get_args():
     parser.add_argument("--batch-size", type=int, default=1000, help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
-    parser.add_argument("--n_parties", type=int, default=1, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default=100, help="number of maximum communication roun")
+    parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
+    parser.add_argument("--comm_round", type=int, default=50, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
@@ -54,8 +54,9 @@ def get_args():
     parser.add_argument("--sample_fraction", type=float, default=1.0, help="how many clients are sampled in each round")
     args = parser.parse_args()
 
-    global record_data
-    record_data = pd.DataFrame([], columns=[i for i in range(args.out_dim)])
+    # global record_data, matrix_data
+    # record_data = pd.DataFrame([], columns=[i for i in range(args.out_dim)])
+    # matrix_data = {}
     return args
 
 
@@ -89,6 +90,8 @@ def train_net_fedx(
     logger.info("n_test: %d" % len(test_dataloader))
 
     # Set optimizer
+    ce_loss = torch.nn.CrossEntropyLoss()
+
     if args_optimizer == "adam":
         optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=lr, weight_decay=args.reg)
     elif args_optimizer == "amsgrad":
@@ -107,6 +110,7 @@ def train_net_fedx(
     random_dataloader = iter(random_loader)
 
     for epoch in range(epochs):
+        feature_all = None
         epoch_loss_collector = []
         for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
             x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
@@ -129,12 +133,18 @@ def train_net_fedx(
             proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
 
+            if feature_all == None:
+                feature_all = proj1_original
+            else:
+                feature_all = torch.cat((feature_all, proj1_original), dim=0)
+
             # Contrastive losses (local, global)
 
-            f_tep = proj1_original.detach()
-            u, s, v = torch.svd(f_tep)
-            global record_data
-            record_data.loc[str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
+            # f_tep = proj1_original.detach()
+            # u, s, v = torch.svd(f_tep)
+            # global record_data, matrix_data
+            # record_data.loc[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
+            # matrix_data[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = v.cpu().numpy()
             nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
             # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
             # loss_nt = nt_local + nt_global
@@ -146,13 +156,17 @@ def train_net_fedx(
             # loss_js = js_global + js_local
             loss_js = js_local
 
+            # loss_supervised = ce_loss(pred1_original, target)
+            # loss = loss_supervised
             loss = loss_nt + loss_js
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
+        torch.save(feature_all,'./ckpt_unsupervised/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
+
     net.eval()
     logger.info(" ** Training complete **")
 
@@ -322,11 +336,17 @@ if __name__ == "__main__":
 
         # Evaluating the global model
         test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
-        logger.info(">> Global Model Test accuracy Top1: %f" % test_acc_1)
-        logger.info(">> Global Model Test accuracy Top5: %f" % test_acc_5)
+        logger.info(">> Private Model 0 Test accuracy Top1: %f" % test_acc_1)
+        logger.info(">> Private Model 0 Test accuracy Top5: %f" % test_acc_5)
+
+        test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[1], val_dl_global, test_dl)
+        logger.info(">> Private Model 1 Test accuracy Top1: %f" % test_acc_1)
+        logger.info(">> Private Model 1 Test accuracy Top5: %f" % test_acc_5)
+
+    # record_data.to_csv('data.csv')
+    # np.save('matrix.npy', matrix_data)
 
     # Save the final round's local and global models
-    torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
+    # torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
     torch.save(nets[0].state_dict(), args.modeldir + "localmodel0" + args.log_file_name + ".pth")
-    global record_data
-    record_data.to_csv('data.csv')
+
