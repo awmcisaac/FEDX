@@ -43,7 +43,7 @@ def get_args():
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=100000, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -215,7 +215,7 @@ def local_train_net(
 
 
 if __name__ == "__main__":
-    wandb.init(project='fed_false_supervised', name='trial', entity='joey61')
+    wandb.init(project='trial', name='false_supervised', entity='joey61')
     args = get_args()
     # Create directory to save log and model
     mkdirs(args.logdir)

@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 from torch.autograd import Variable
 from torch.utils.data import DataLoader, TensorDataset
 
-from datasets import CIFAR10_truncated, SVHN_truncated
+from datasets import CIFAR10_truncated, SVHN_truncated, MNIST_truncated
 
 logging.basicConfig()
 logger = logging.getLogger()
@@ -68,6 +68,19 @@ def load_cifar10_data(datadir):
     return (X_train, y_train, X_test, y_test)
 
 
+def load_mnist_data(datadir):
+
+    transform = transforms.Compose([transforms.ToTensor()])
+
+    cifar10_train_ds = MNIST_truncated(datadir, train=True, download=True, transform=transform)
+    cifar10_test_ds = MNIST_truncated(datadir, train=False, download=True, transform=transform)
+
+    X_train, y_train = cifar10_train_ds.data, cifar10_train_ds.target
+    X_test, y_test = cifar10_test_ds.data, cifar10_test_ds.target
+
+    return (X_train, y_train, X_test, y_test)
+
+
 def load_svhn_data(datadir):
     transform = transforms.Compose([transforms.ToTensor()])
 
@@ -107,6 +120,8 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4):
         X_train, y_train, X_test, y_test = load_cifar10_data(datadir)
     elif dataset == "svhn":
         X_train, y_train, X_test, y_test = load_svhn_data(datadir)
+    elif dataset == 'mnist':
+        X_train, y_train, X_test, y_test = load_mnist_data(datadir)
 
     n_train = y_train.shape[0]
 
@@ -263,6 +278,53 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
         )
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
 
+        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=True, shuffle=True)
+        test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
+        val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)
+
+    elif dataset == 'mnist':
+        dl_obj = MNIST_truncated
+        normalize = transforms.Normalize((0.1307,), (0.3081,))
+        transform_train = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Lambda(
+                    lambda x: F.pad(
+                        Variable(x.unsqueeze(0), requires_grad=False),
+                        (4, 4, 4, 4),
+                        mode="reflect",
+                    ).data.squeeze()
+                ),
+                transforms.ToPILImage(),
+                transforms.RandomCrop(32),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomRotation(90),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+
+        # data prep for test set
+        transform_test = transforms.Compose([transforms.ToTensor(), normalize])
+
+        train_ds = dl_obj(
+            datadir,
+            dataidxs=dataidxs,
+            train=True,
+            transform=transform_train,
+            download=True,
+            target_transform=target_transform
+        )
+
+        val_ds = dl_obj(
+            datadir,
+            dataidxs=dataidxs,
+            train=True,
+            transform=transform_test,
+            download=False,
+            target_transform=target_transform
+        )
+        test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
         train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=True, shuffle=True)
         test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
         val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)

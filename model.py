@@ -5,7 +5,7 @@ Main model (FedX) class representing backbone network and projection heads
 
 import torch.nn as nn
 
-from resnetcifar import ResNet18_cifar10, ResNet50_cifar10
+from resnetcifar import ResNet18_cifar10, ResNet50_cifar10, ResNet18_MNIST
 
 
 class ModelFedX(nn.Module):
@@ -22,7 +22,7 @@ class ModelFedX(nn.Module):
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
             basemodel.fc.in_features
         elif base_model == "resnet18-fmnist":
-            basemodel = ResNet18_mnist()
+            basemodel = ResNet18_MNIST()
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
             self.num_ftrs = basemodel.fc.in_features
         elif base_model == "resnet18-cifar10" or base_model == "resnet18":
