@@ -81,15 +81,18 @@ def train_net_fedx(
     args,
     round,
     device="cpu",
+    op_net = None
 ):
     net.cuda()
     # global_net.cuda()
     logger.info("Training network %s" % str(net_id))
     logger.info("n_training: %d" % len(train_dataloader))
     logger.info("n_test: %d" % len(test_dataloader))
-
+    if op_net:
+        op_net.eval()
     # Set optimizer
     ce_loss = torch.nn.CrossEntropyLoss()
+    kl_loss = torch.nn.KLDivLoss()
 
     if args_optimizer == "adam":
         optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=lr, weight_decay=args.reg)
@@ -155,14 +158,29 @@ def train_net_fedx(
             # loss_js = js_global + js_local
             loss_js = js_local
 
-            loss_supervised = ce_loss(pred1_original, target)
+            # if hasattr(net, 'v'):
+            #     v_global = net.v
+            #     u, s, v = torch.svd(proj1_original.detach())
+            #     A = torch.diag_embed(s)
+            #     proj1_global = torch.matmul(u, torch.matmul(A, v_global.transpose(-2, -1)))
+            #     loss_ours = kl_loss(proj1_original, proj1_global)
+            # else:
+            #     loss_ours = 0
+
+            # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
-            loss = loss_nt + loss_js + loss_supervised
+
+            _, op_proj1, op_pred1 = op_net(x1)
+            op_loss = kl_loss(proj1_original, op_proj1)
+            loss = loss_nt + loss_js + 2 * op_loss
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
-        torch.save(feature_all,'./ckpt_false_supervised/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
+        feature_all = feature_all.detach()
+        torch.save(feature_all,'./ckpt_kl/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
+        u, s, v = torch.svd(feature_all)
+        net.v = v
         epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
         logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
 
@@ -193,6 +211,7 @@ def local_train_net(
         logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
         train_dl_local = train_dl_local_dict[net_id]
         val_dl_local = val_dl_local_dict[net_id]
+        op_net = nets[1-net_id]
         train_net_fedx(
             net_id,
             net,
@@ -207,6 +226,7 @@ def local_train_net(
             args,
             round,
             device=device,
+            op_net = op_net,
         )
 
     if global_model:
@@ -215,7 +235,7 @@ def local_train_net(
 
 
 if __name__ == "__main__":
-    wandb.init(project='trial', name='false_supervised', entity='joey61')
+    wandb.init(project='trial', name='kl', entity='joey61')
     args = get_args()
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -279,23 +299,23 @@ if __name__ == "__main__":
     net_id = 0
     permute_record = list(range(10))
     np.random.shuffle(permute_record)
-    def target_transform(label):
-        label = permute_record[label]
-        return label
+    # def target_transform(label):
+    #     label = permute_record[label]
+    #     return label
 
     # Distribute dataset and dataloader to each local party
     # We use two dataloaders for training FedX (train_dataloader, random_dataloader), 
     # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
     for net in nets:
         dataidxs = net_dataidx_map[net_id]
-        if net_id ==0:
-            train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-                args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
-            )
-        else:
-            train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-                args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
-            )
+        # if net_id ==0:
+        train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+            args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
+        )
+        # else:
+        #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+        #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
+        #     )
         train_dl_local_dict[net_id] = train_dl_local
         val_dl_local_dict[net_id] = val_dl_local
         net_id += 1
@@ -310,7 +330,6 @@ if __name__ == "__main__":
         nets_this_round = {k: nets[k] for k in party_list_this_round}
         # for net in nets_this_round.values():
         #     net.load_state_dict(global_w)
-
         # Train local model with local data
         local_train_net(
             nets_this_round,
@@ -327,6 +346,16 @@ if __name__ == "__main__":
 
         total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
         fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
+
+
+        for net_id, net in enumerate(nets_this_round.values()):
+            if net_id == 0:
+                global_v = net.v * fed_avg_freqs[net_id]
+            else:
+                global_v += net.v * fed_avg_freqs[net_id]
+
+        for net_id, net in enumerate(nets_this_round.values()):
+            net.v = global_v
 
         # Averaging the local models' parameters to get global model
         # for net_id, net in enumerate(nets_this_round.values()):
