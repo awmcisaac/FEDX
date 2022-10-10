@@ -1,4 +1,4 @@
-""" 
+"""
 Main code for training and evaluating FedX.
 
 """
@@ -172,7 +172,7 @@ def train_net_fedx(
 
             _, op_proj1, op_pred1 = op_net(x1)
             op_loss = kl_loss(proj1_original, op_proj1)
-            loss = loss_nt + loss_js + op_loss
+            loss = loss_nt + loss_js
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
@@ -186,6 +186,7 @@ def train_net_fedx(
 
     net.eval()
     logger.info(" ** Training complete **")
+
 
 def local_train_net(
     nets,
@@ -232,8 +233,9 @@ def local_train_net(
         global_model.to("cpu")
     return nets
 
+
 if __name__ == "__main__":
-    wandb.init(project='trial', name='2_clients_guided', entity='joey61')
+    # wandb.init(project='trial', name='2_clients_guided', entity='joey61')
     args = get_args()
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -286,104 +288,112 @@ if __name__ == "__main__":
     # Initializing net from each local party.
     logger.info("Initializing nets")
     nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
-    global_model = None
+
+    for i in range(len(nets)):
+        state_dict = torch.load(args.modeldir + "/guided/local_model_{}".format(i) + ".pth")
+        nets[i].load_state_dict(state_dict)
+
+        test_acc_1, test_acc_5 = test_linear_fedX(nets[i], val_dl_global, test_dl)
+        logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
+        logger.info(">> Private Model {} Test accuracy Top5 {}".format(i, test_acc_5))
+
     # global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
 
     # global_model = global_models[0]
-    n_comm_rounds = args.comm_round
-
-    train_dl_local_dict = {}
-    val_dl_local_dict = {}
-    net_id = 0
-    permute_record = list(range(10))
-    np.random.shuffle(permute_record)
-    # def target_transform(label):
-    #     label = permute_record[label]
-    #     return label
-
-    # Distribute dataset and dataloader to each local party
-    # We use two dataloaders for training FedX (train_dataloader, random_dataloader), 
-    # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
-    for net in nets:
-        dataidxs = net_dataidx_map[net_id]
-        # if net_id ==0:
-        train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-            args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
-        )
-        # else:
-        #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-        #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
-        #     )
-        train_dl_local_dict[net_id] = train_dl_local
-        val_dl_local_dict[net_id] = val_dl_local
-        net_id += 1
-
-    # Main training communication loop.
-    for round in range(n_comm_rounds):
-        logger.info("in comm round:" + str(round))
-        party_list_this_round = party_list_rounds[round]
-
-        # Download global model from (virtual) central server
-        # global_w = global_model.state_dict()
-        nets_this_round = {k: nets[k] for k in party_list_this_round}
-        # for net in nets_this_round.values():
-        #     net.load_state_dict(global_w)
-        # Train local model with local data
-        nets = local_train_net(
-            nets_this_round,
-            args,
-            net_dataidx_map,
-            train_dl_local_dict,
-            val_dl_local_dict,
-            train_dl=train_dl,
-            test_dl=test_dl,
-            global_model=global_model,
-            device=device,
-            round=round
-        )
-
-        total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
-        fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
-
-
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     if net_id == 0:
-        #         global_v = net.v * fed_avg_freqs[net_id]
-        #     else:
-        #         global_v += net.v * fed_avg_freqs[net_id]
-        #
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     net.v = global_v
-
-        # Averaging the local models' parameters to get global model
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     net_para = net.state_dict()
-        #     if net_id == 0:
-        #         for key in net_para:
-        #             global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-        #     else:
-        #         for key in net_para:
-        #             global_w[key] += net_para[key] * fed_avg_freqs[net_id]
-
-        # global_model.load_state_dict(copy.deepcopy(global_w))
-        # global_model.cuda()
-
-        # Evaluating the global model
-        # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
-        # logger.info(">> Private Model 0 Test accuracy Top1: %f" % test_acc_1)
-        # logger.info(">> Private Model 0 Test accuracy Top5: %f" % test_acc_5)
-
-        # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[1], val_dl_global, test_dl)
-        # logger.info(">> Private Model 1 Test accuracy Top1: %f" % test_acc_1)
-        # logger.info(">> Private Model 1 Test accuracy Top5: %f" % test_acc_5)
-        for net_id, net in nets.items():
-            save_feature_bank(net, val_dl_global, './ckpt_2_individual_guided/'+ str(net_id)+'_'+str(round)+'test.pth')
-
-    # record_data.to_csv('data.csv')
-    # np.save('matrix.npy', matrix_data)
-
-    # Save the final round's local and global models
-    # torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
-    for net_id,  net in nets.items():
-        torch.save(net.state_dict(), args.modeldir + "/guided/local_model_{}".format(net_id) + ".pth")
+    # n_comm_rounds = args.comm_round
+    #
+    # train_dl_local_dict = {}
+    # val_dl_local_dict = {}
+    # net_id = 0
+    # permute_record = list(range(10))
+    # np.random.shuffle(permute_record)
+    # # def target_transform(label):
+    # #     label = permute_record[label]
+    # #     return label
+    #
+    # # Distribute dataset and dataloader to each local party
+    # # We use two dataloaders for training FedX (train_dataloader, random_dataloader),
+    # # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
+    # for net in nets:
+    #     dataidxs = net_dataidx_map[net_id]
+    #     # if net_id ==0:
+    #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+    #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
+    #     )
+    #     # else:
+    #     #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+    #     #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
+    #     #     )
+    #     train_dl_local_dict[net_id] = train_dl_local
+    #     val_dl_local_dict[net_id] = val_dl_local
+    #     net_id += 1
+    #
+    # # Main training communication loop.
+    # for round in range(n_comm_rounds):
+    #     logger.info("in comm round:" + str(round))
+    #     party_list_this_round = party_list_rounds[round]
+    #
+    #     # Download global model from (virtual) central server
+    #     # global_w = global_model.state_dict()
+    #     nets_this_round = {k: nets[k] for k in party_list_this_round}
+    #     # for net in nets_this_round.values():
+    #     #     net.load_state_dict(global_w)
+    #     # Train local model with local data
+    #     nets = local_train_net(
+    #         nets_this_round,
+    #         args,
+    #         net_dataidx_map,
+    #         train_dl_local_dict,
+    #         val_dl_local_dict,
+    #         train_dl=train_dl,
+    #         test_dl=test_dl,
+    #         global_model=global_model,
+    #         device=device,
+    #         round=round
+    #     )
+    #
+    #     total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
+    #     fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
+    #
+    #
+    #     # for net_id, net in enumerate(nets_this_round.values()):
+    #     #     if net_id == 0:
+    #     #         global_v = net.v * fed_avg_freqs[net_id]
+    #     #     else:
+    #     #         global_v += net.v * fed_avg_freqs[net_id]
+    #     #
+    #     # for net_id, net in enumerate(nets_this_round.values()):
+    #     #     net.v = global_v
+    #
+    #     # Averaging the local models' parameters to get global model
+    #     # for net_id, net in enumerate(nets_this_round.values()):
+    #     #     net_para = net.state_dict()
+    #     #     if net_id == 0:
+    #     #         for key in net_para:
+    #     #             global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+    #     #     else:
+    #     #         for key in net_para:
+    #     #             global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+    #
+    #     # global_model.load_state_dict(copy.deepcopy(global_w))
+    #     # global_model.cuda()
+    #
+    #     # Evaluating the global model
+    #     # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
+    #     # logger.info(">> Private Model 0 Test accuracy Top1: %f" % test_acc_1)
+    #     # logger.info(">> Private Model 0 Test accuracy Top5: %f" % test_acc_5)
+    #
+    #     # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[1], val_dl_global, test_dl)
+    #     # logger.info(">> Private Model 1 Test accuracy Top1: %f" % test_acc_1)
+    #     # logger.info(">> Private Model 1 Test accuracy Top5: %f" % test_acc_5)
+    #     for net_id, net in nets.items():
+    #         save_feature_bank(net, val_dl_global, './ckpt_2_individual_guided/'+ str(net_id)+'_'+str(round)+'test.pth')
+    #
+    # # record_data.to_csv('data.csv')
+    # # np.save('matrix.npy', matrix_data)
+    #
+    # # Save the final round's local and global models
+    # # torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
+    # for net_id,  net in nets.items():
+    #     torch.save(net.state_dict(), args.modeldir + "/guided/local_model_{}".format(net_id) + ".pth")
 

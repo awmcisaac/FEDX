@@ -171,6 +171,28 @@ class Net(nn.Module):
         return out
 
 
+
+def save_feature_bank(net, memory_data_loader, name):
+    net.eval()
+    feature_bank = []
+
+    # Save training data's embeddings into the feature_bank.
+    with torch.no_grad():
+        for data, _, target, _ in memory_data_loader:
+            feature, _, _ = net(data.cuda(non_blocking=True))
+            feature_bank.append(feature)
+        feature_bank = torch.cat(feature_bank, dim=0).contiguous().cuda()
+        feature_labels = torch.tensor(memory_data_loader.dataset.target, device=feature_bank.device)
+
+    linear_ds = TensorDataset(feature_bank, feature_labels)
+    torch.save(linear_ds, name)
+
+
+# def test_featrue_bank(feature_bank_name, test_data_loader):
+#     linear_ds = torch.load(feature_bank_name)
+#     linear_loader = DataLoader(linear_ds, batch_size=64, shuffle=True)
+
+
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
     net.eval()
@@ -278,7 +300,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
         )
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
 
-        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=True, shuffle=True)
+        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=False, shuffle=True)
         test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
         val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)
 
