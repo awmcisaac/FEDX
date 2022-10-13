@@ -18,7 +18,7 @@ import pandas as pd
 import copy
 from losses import js_loss, nt_xent
 from model import init_nets
-from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank
+from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_featrue_bank
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -289,13 +289,19 @@ if __name__ == "__main__":
     logger.info("Initializing nets")
     nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
 
-    for i in range(len(nets)):
-        state_dict = torch.load(args.modeldir + "/guided/local_model_{}".format(i) + ".pth")
-        nets[i].load_state_dict(state_dict)
+    # for i in range(len(nets)):
+    #     state_dict = torch.load(args.modeldir + "/guided/local_model_{}".format(i) + ".pth")
+    #     nets[i].load_state_dict(state_dict)
+    #
+    #     test_acc_1, test_acc_5 = test_linear_fedX(nets[i], val_dl_global, test_dl)
+    #     logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
+    #     logger.info(">> Private Model {} Test accuracy Top5 {}".format(i, test_acc_5))
 
-        test_acc_1, test_acc_5 = test_linear_fedX(nets[i], val_dl_global, test_dl)
+
+    for i in range(len(nets)):
+        save_dir = './ckpt_2_non_iid_individual/{}_49_'.format(i)
+        test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
         logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
-        logger.info(">> Private Model {} Test accuracy Top5 {}".format(i, test_acc_5))
 
     # global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
 

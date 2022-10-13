@@ -22,7 +22,6 @@ from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
-
 # record_data = None
 # matrix_data = None
 
@@ -43,7 +42,7 @@ def get_args():
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=100000, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -59,6 +58,7 @@ def get_args():
     # matrix_data = {}
     return args
 
+save_dir = 'ckpt_2_non_iid_individual/'
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -66,6 +66,15 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
     random.seed(seed)
+
+def recreate_feature(data, b):
+    A = torch.matmul(b, data.t())
+    u, s, v = torch.svd(A)
+    u = torch.matmul(v, u.t())
+    # u = u[:, :select]
+    # b = b[:select]
+    # f = torch.matmul(u, b)
+    return u
 
 def train_net_fedx(
     net_id,
@@ -81,7 +90,8 @@ def train_net_fedx(
     args,
     round,
     device="cpu",
-    op_net = None
+    op_net = None,
+    b_dict = None,
 ):
     net.cuda()
     # global_net.cuda()
@@ -92,8 +102,8 @@ def train_net_fedx(
         op_net.eval()
     # Set optimizer
     ce_loss = torch.nn.CrossEntropyLoss()
-    kl_loss = torch.nn.KLDivLoss()
-
+    # kl_loss = torch.nn.KLDivLoss()
+    kl_loss = torch.nn.MSELoss()
     if args_optimizer == "adam":
         optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=lr, weight_decay=args.reg)
     elif args_optimizer == "amsgrad":
@@ -112,7 +122,7 @@ def train_net_fedx(
     random_dataloader = iter(random_loader)
 
     for epoch in range(epochs):
-        feature_all = None
+        feature_all = []
         epoch_loss_collector = []
         for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
             x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
@@ -135,10 +145,15 @@ def train_net_fedx(
             proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
 
-            if feature_all == None:
-                feature_all = proj1_original
-            else:
-                feature_all = torch.cat((feature_all, proj1_original), dim=0)
+            feature_all.append(proj1_original.detach())
+
+            loss_ours = 0
+            # for one in b_dict:
+            #     if one!=net_id:
+            #         if b_dict[one] != None:
+            #             u_tep = recreate_feature(proj1_original, b_dict[one])
+            #             projection_tep = torch.matmul(u_tep, b_dict[one]).detach()
+            #             loss_ours += kl_loss(proj1_original, projection_tep)
 
             # Contrastive losses (local, global)
 
@@ -170,22 +185,26 @@ def train_net_fedx(
             # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
 
-            _, op_proj1, op_pred1 = op_net(x1)
-            op_loss = kl_loss(proj1_original, op_proj1)
-            loss = loss_nt + loss_js + op_loss
+            # _, op_proj1, op_pred1 = op_net(x1)
+            # op_loss = kl_loss(proj1_original, op_proj1)
+
+            loss = loss_nt + loss_js + loss_ours
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
-        feature_all = feature_all.detach()
-        torch.save(feature_all,'./ckpt_2_individual_guided/'+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
-        u, s, v = torch.svd(feature_all)
-        net.v = v
-        epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
-        logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
-
+    feature_all = torch.cat(feature_all, dim=0)
+    feature_all = feature_all.detach()
+    torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
+    u, s, v = torch.svd(feature_all)
+    sigma = torch.diag_embed(s)
+    b = torch.matmul(sigma, v.t())
+    b_dict[net_id] = b
+    epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
+    logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
     net.eval()
     logger.info(" ** Training complete **")
+    return b_dict
 
 def local_train_net(
     nets,
@@ -200,32 +219,33 @@ def local_train_net(
     round=None,
     device="cpu",
 ):
-
     if global_model:
         global_model.cuda()
-
     n_epoch = args.epochs
+    b_dict = {0: None, 1: None}
     for net_id, net in nets.items():
         dataidxs = net_dataidx_map[net_id]
         logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
         train_dl_local = train_dl_local_dict[net_id]
         val_dl_local = val_dl_local_dict[net_id]
-        op_net = nets[1-net_id]
-        train_net_fedx(
-            net_id,
-            net,
-            global_model,
-            train_dl_local,
-            val_dl_local,
-            test_dl,
-            n_epoch,
-            args.lr,
-            args.optimizer,
-            args.temperature,
-            args,
-            round,
-            device=device,
-            op_net = op_net,
+        # op_net = nets[1-net_id]
+        op_net = None
+        b_dict = train_net_fedx(
+        net_id,
+        net,
+        global_model,
+        train_dl_local,
+        val_dl_local,
+        test_dl,
+        n_epoch,
+        args.lr,
+        args.optimizer,
+        args.temperature,
+        args,
+        round,
+        device=device,
+        op_net = op_net,
+        b_dict = b_dict
         )
 
     if global_model:
@@ -233,7 +253,7 @@ def local_train_net(
     return nets
 
 if __name__ == "__main__":
-    wandb.init(project='trial', name='2_clients_guided', entity='joey61')
+    wandb.init(project='trial', name='2_clients_ours', entity='joey61')
     args = get_args()
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -377,7 +397,7 @@ if __name__ == "__main__":
         # logger.info(">> Private Model 1 Test accuracy Top1: %f" % test_acc_1)
         # logger.info(">> Private Model 1 Test accuracy Top5: %f" % test_acc_5)
         for net_id, net in nets.items():
-            save_feature_bank(net, val_dl_global, './ckpt_2_individual_guided/'+ str(net_id)+'_'+str(round)+'test.pth')
+            save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
 
     # record_data.to_csv('data.csv')
     # np.save('matrix.npy', matrix_data)
@@ -385,5 +405,5 @@ if __name__ == "__main__":
     # Save the final round's local and global models
     # torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
     for net_id,  net in nets.items():
-        torch.save(net.state_dict(), args.modeldir + "/guided/local_model_{}".format(net_id) + ".pth")
+        torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
 

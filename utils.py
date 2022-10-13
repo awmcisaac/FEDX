@@ -172,7 +172,7 @@ class Net(nn.Module):
 
 
 
-def save_feature_bank(net, memory_data_loader, name):
+def save_feature_bank(net, memory_data_loader, test_data_loader, name):
     net.eval()
     feature_bank = []
 
@@ -184,13 +184,52 @@ def save_feature_bank(net, memory_data_loader, name):
         feature_bank = torch.cat(feature_bank, dim=0).contiguous().cuda()
         feature_labels = torch.tensor(memory_data_loader.dataset.target, device=feature_bank.device)
 
+    test_bank = []
+    with torch.no_grad():
+        for data, _, target, _ in test_data_loader:
+            feature, _, _ = net(data.cuda(non_blocking=True))
+            test_bank.append(feature)
+        test_bank = torch.cat(test_bank, dim=0).contiguous().cuda()
+        test_labels = torch.tensor(test_data_loader.dataset.target, device=test_bank.device)
+
     linear_ds = TensorDataset(feature_bank, feature_labels)
-    torch.save(linear_ds, name)
+    test_ds = TensorDataset(test_bank, test_labels)
+    torch.save(linear_ds, name+'train.pth')
+    torch.save(test_ds, name +'test.pth')
 
+def test_featrue_bank(name, feature_size, label_size):
+    linear_ds = torch.load(name+'train.pth')
+    linear_ds_test = torch.load(name+'test.pth')
+    linear_loader = DataLoader(linear_ds, batch_size=64, shuffle=True)
+    linear_loader_test = DataLoader(linear_ds_test, batch_size=64, shuffle=True)
 
-# def test_featrue_bank(feature_bank_name, test_data_loader):
-#     linear_ds = torch.load(feature_bank_name)
-#     linear_loader = DataLoader(linear_ds, batch_size=64, shuffle=True)
+    loss_criterion = nn.CrossEntropyLoss()
+    linear_net = Net(feature_size, label_size)
+    linear_net = linear_net.cuda()
+    train_optimizer = optim.Adam(linear_net.parameters(), lr=1e-3, weight_decay=1e-6)
+
+    for epoch in range(1, 101):
+        for data, target in linear_loader:
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True).type(torch.long)
+            out = linear_net(data)
+            loss = loss_criterion(out, target)
+
+            train_optimizer.zero_grad()
+            loss.backward()
+            train_optimizer.step()
+
+    # Evaluation
+    total_correct_1, total_correct_5, total_num = 0.0, 0.0, 0
+    with torch.no_grad():
+        for data, target in linear_loader_test:
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            out = linear_net(data)
+
+            total_num += data.size(0)
+            prediction = torch.argsort(out, dim=-1, descending=True)
+            total_correct_1 += torch.sum((prediction[:, 0:1] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+            total_correct_5 += torch.sum((prediction[:, 0:5] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+    return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
 
 
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
