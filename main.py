@@ -58,7 +58,12 @@ def get_args():
     # matrix_data = {}
     return args
 
-save_dir = 'ckpt_2_non_iid_individual/'
+save_dir = 'ckpt_2_non_iid_individual_guided/'
+model_dir = './models/' +save_dir
+if not os.path.exists(save_dir):
+    os.makedirs(save_dir)
+    os.makedirs(model_dir)
+
 
 def set_seed(seed):
     np.random.seed(seed)
@@ -185,10 +190,10 @@ def train_net_fedx(
             # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
 
-            # _, op_proj1, op_pred1 = op_net(x1)
-            # op_loss = kl_loss(proj1_original, op_proj1)
+            _, op_proj1, op_pred1 = op_net(x1)
+            op_loss = kl_loss(proj1_original, op_proj1)
 
-            loss = loss_nt + loss_js + loss_ours
+            loss = loss_nt + loss_js + loss_ours +op_loss
             loss.backward()
             optimizer.step()
             epoch_loss_collector.append(loss.item())
@@ -228,8 +233,8 @@ def local_train_net(
         logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
         train_dl_local = train_dl_local_dict[net_id]
         val_dl_local = val_dl_local_dict[net_id]
-        # op_net = nets[1-net_id]
-        op_net = None
+        op_net = nets[1-net_id]
+        # op_net = None
         b_dict = train_net_fedx(
         net_id,
         net,
