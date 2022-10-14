@@ -297,9 +297,8 @@ if __name__ == "__main__":
     #     logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
     #     logger.info(">> Private Model {} Test accuracy Top5 {}".format(i, test_acc_5))
 
-
     for i in range(len(nets)):
-        save_dir = './ckpt_2_non_iid_individual/{}_49_'.format(i)
+        save_dir = './ckpt_2_non_iid_individual_guided/{}_49_'.format(i)
         test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
         logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
 

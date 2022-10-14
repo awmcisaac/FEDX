@@ -58,7 +58,7 @@ def get_args():
     # matrix_data = {}
     return args
 
-save_dir = 'ckpt_2_non_iid_individual_guided/'
+save_dir = 'ckpt_2_non_iid_aggregated/'
 model_dir = './models/' +save_dir
 if not os.path.exists(save_dir):
     os.makedirs(save_dir)
@@ -349,10 +349,10 @@ if __name__ == "__main__":
         party_list_this_round = party_list_rounds[round]
 
         # Download global model from (virtual) central server
-        # global_w = global_model.state_dict()
+        global_w = global_model.state_dict()
         nets_this_round = {k: nets[k] for k in party_list_this_round}
-        # for net in nets_this_round.values():
-        #     net.load_state_dict(global_w)
+        for net in nets_this_round.values():
+            net.load_state_dict(global_w)
         # Train local model with local data
         nets = local_train_net(
             nets_this_round,
@@ -380,18 +380,20 @@ if __name__ == "__main__":
         # for net_id, net in enumerate(nets_this_round.values()):
         #     net.v = global_v
 
-        # Averaging the local models' parameters to get global model
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     net_para = net.state_dict()
-        #     if net_id == 0:
-        #         for key in net_para:
-        #             global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-        #     else:
-        #         for key in net_para:
-        #             global_w[key] += net_para[key] * fed_avg_freqs[net_id]
 
-        # global_model.load_state_dict(copy.deepcopy(global_w))
-        # global_model.cuda()
+        # weights aggregation part
+        # Averaging the local models' parameters to get global model
+        for net_id, net in enumerate(nets_this_round.values()):
+            net_para = net.state_dict()
+            if net_id == 0:
+                for key in net_para:
+                    global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+            else:
+                for key in net_para:
+                    global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+
+        global_model.load_state_dict(copy.deepcopy(global_w))
+        global_model.cuda()
 
         # Evaluating the global model
         # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
