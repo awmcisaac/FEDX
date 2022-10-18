@@ -152,9 +152,13 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4):
                 min_size = min([len(idx_j) for idx_j in idx_batch])
 
         for j in range(n_parties):
-            np.random.shuffle(idx_batch[j])
             net_dataidx_map[j] = idx_batch[j]
 
+    public_idx = np.random.choice(n_train, int(2*n_train/50), replace=False)
+    for one in net_dataidx_map:
+        net_dataidx_map[one] = list(set(net_dataidx_map[one]).difference(set(public_idx)))
+        np.random.shuffle(net_dataidx_map[one])
+    net_dataidx_map['public'] = public_idx
     traindata_cls_counts = record_net_data_stats(y_train, net_dataidx_map, logdir)
     return (X_train, y_train, X_test, y_test, net_dataidx_map, traindata_cls_counts)
 
@@ -302,7 +306,6 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
 def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_level=0, target_transform = None):
     if dataset == "cifar10":
         dl_obj = CIFAR10_truncated
-
         normalize = transforms.Normalize(
             mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
             std=[x / 255.0 for x in [63.0, 62.1, 66.7]],

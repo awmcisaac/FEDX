@@ -119,41 +119,45 @@ def train_net_fedx(
     # Random dataloader for relational loss
     random_loader = copy.deepcopy(train_dataloader)
     random_dataloader = iter(random_loader)
+    train_iter = iter(train_dataloader)
+    iter_num = len(train_dataloader) * epochs
 
-    for epoch in range(epochs):
+    for batch_idx in range(iter_num):
         feature_all = []
         epoch_loss_collector = []
-        for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
-            x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
-            optimizer.zero_grad()
-            target = target.long()
-            try:
-                random_x, _, _, _ = random_dataloader.next()
-            except:
-                random_dataloader = iter(random_loader)
-                random_x, _, _, _ = random_dataloader.next()
-            random_x = random_x.cuda()
+        x1, x2, target, _ = train_iter.next()
+        x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
+        # for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
+        optimizer.zero_grad()
+        target = target.long()
+        try:
+            random_x, _, _, _ = random_dataloader.next()
+        except:
+            random_dataloader = iter(random_loader)
+            random_x, _, _, _ = random_dataloader.next()
+        random_x = random_x.cuda()
+        all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
+        _, proj1, pred1 = net(all_x)
+        # with torch.no_grad():
+        #     _, proj2, pred2 = global_net(all_x)
 
-            all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
-            _, proj1, pred1 = net(all_x)
-            # with torch.no_grad():
-            #     _, proj2, pred2 = global_net(all_x)
+        # pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+        proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+        # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+        feature_all.append(proj1_original.detach())
+        loss_ours = 0
+        # previous online-version
+        # if round > 5:
 
-            pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-            proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-            # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-            feature_all.append(proj1_original.detach())
-            loss_ours = 0
-            # previous online-version
-            # if round > 5:
-            _, op_proj1, op_pred1 = op_net(x1)
-            q, r = torch.linalg.qr(op_proj1)
-            q_, r_ = torch.linalg.qr(proj1_original)
-            r_avg = (r+r_)/2
-            projection_tep = torch.matmul(q_, r_avg).detach()
-            # q_tep = recreate_feature(proj1_original, r)
-            # projection_tep = torch.matmul(q_tep, r).detach()
-            loss_ours += kl_loss(proj1_original, projection_tep)
+        # if args.basis:
+        #     _, op_proj1, op_pred1 = op_net(x1)
+        #     q, r = torch.linalg.qr(op_proj1)
+        #     q_, r_ = torch.linalg.qr(proj1_original)
+        #     r_avg = (r+r_)/2
+        #     projection_tep = torch.matmul(q_, r_avg).detach()
+        # q_tep = recreate_feature(proj1_original, r)
+        # projection_tep = torch.matmul(q_tep, r).detach()
+        #     loss_ours += kl_loss(proj1_original, projection_tep)
 
                 # u_op, s_op, v_op = torch.svd(op_proj1)
                 # sigma_op = torch.diag_embed(s_op)
@@ -174,16 +178,16 @@ def train_net_fedx(
             # global record_data, matrix_data
             # record_data.loc[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
             # matrix_data[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = v.cpu().numpy()
-            nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
+        nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
             # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
             # loss_nt = nt_local + nt_global
-            loss_nt = nt_local
+        loss_nt = nt_local
 
             # Relational losses (local, global)
             # js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
-            js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
+        js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
             # loss_js = js_global + js_local
-            loss_js = js_local
+        loss_js = js_local
 
             # if hasattr(net, 'v'):
             #     v_global = net.v
@@ -197,19 +201,19 @@ def train_net_fedx(
             # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
 
-            op_loss = 0
+        op_loss = 0
             # _, op_proj1, op_pred1 = op_net(x1)
             # op_loss = kl_loss(proj1_original, op_proj1)
 
-            loss = loss_nt + loss_js + 0.1*loss_ours + op_loss
-            loss.backward()
-            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
-            optimizer.step()
-            epoch_loss_collector.append(loss.item())
+        loss = loss_nt + loss_js + 0.1*loss_ours + op_loss
+        loss.backward()
+        torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
+        optimizer.step()
+        epoch_loss_collector.append(loss.item())
 
     feature_all = torch.cat(feature_all, dim=0)
     feature_all = feature_all.detach()
-    torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
+    torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+'.pth')
     u, s, v = torch.svd(feature_all)
     sigma = torch.diag_embed(s)
     # if round > 5:
@@ -224,9 +228,47 @@ def train_net_fedx(
     b = torch.matmul(sigma, v.t())
     net.b = b
     epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
-    logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
+    logger.info("Round: %d Loss: %f" % (round, epoch_loss))
     net.eval()
     logger.info(" ** Training complete **")
+
+def feature_distillation(
+    nets,
+    args,
+    public_data_loader,
+    round=None,
+    device="cpu",
+):
+
+    for batch_idx, (x1, x2, target, _) in enumerate(public_data_loader):
+        ensemble_feature = []
+        x1 = x1.cuda()
+        for net_id, net in enumerate(nets.values()):
+            net.eval()
+            _, proj1, pred1 = net(x1)
+            ensemble_feature.append(proj1.detach())
+        ensemble_feature = sum(ensemble_feature)/len(ensemble_feature)
+
+        for net_id, net in enumerate(nets.values()):
+            kl_loss = torch.nn.MSELoss()
+            if args.optimizer == "adam":
+                optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr,
+                                       weight_decay=args.reg)
+            elif args.optimizer == "amsgrad":
+                optimizer = optim.Adam(
+                    filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, weight_decay=args.reg, amsgrad=True
+                )
+            elif args.optimizer == "sgd":
+                optimizer = optim.SGD(
+                    filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, momentum=0.9, weight_decay=args.reg
+                )
+            net.train()
+            _, proj1, pred1 = net(x1)
+            loss = kl_loss(proj1, ensemble_feature)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
+            optimizer.step()
+
 
 def local_train_net(
     nets,
@@ -276,8 +318,8 @@ if __name__ == "__main__":
 
 
     args = get_args()
-    args.aggregation = 1
-    args.distillation = 0
+    args.aggregation = 0
+    args.distillation = 1
     args.basis = 0
     args.svd = 0
     args.avg = 0
@@ -387,6 +429,7 @@ if __name__ == "__main__":
         val_dl_local_dict[net_id] = val_dl_local
         net_id += 1
 
+    public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size//2, args.batch_size * 2, net_dataidx_map['public'])
     # Main training communication loop.
     # state_dict = torch.load('./models/ckpt_1_self_teaching/local_model_0.pth')
     # nets[1].load_state_dict(state_dict)
@@ -416,18 +459,19 @@ if __name__ == "__main__":
             round=round
         )
 
+
+        if args.distillation:
+            feature_distillation(
+                nets_this_round,
+                args,
+                public_data_loader,
+                device = device,
+                round = round
+            )
+
+
         total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
         fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
-
-
-            # for net_id, net in enumerate(nets_this_round.values()):
-            #     if net_id == 0:
-            #         global_v = net.v * fed_avg_freqs[net_id]
-            #     else:
-            #         global_v += net.v * fed_avg_freqs[net_id]
-            #
-            # for net_id, net in enumerate(nets_this_round.values()):
-            #     net.v = global_v
 
         log_info = {}
         if args.aggregation:
