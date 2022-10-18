@@ -391,7 +391,7 @@ if __name__ == "__main__":
         os.makedirs(save_dir)
         os.makedirs(model_dir)
 
-    # wandb.init(project='Basis_Aggregation_{}'.args.dataset, name=args.name, entity='joey61')
+    wandb.init(project='Basis_Aggregation_{}'.args.dataset, name=args.name, entity='joey61')
     # Save arguments
     with open(os.path.join(args.logdir, argument_path), "w") as f:
         json.dump(str(args), f)
@@ -538,7 +538,7 @@ if __name__ == "__main__":
                 log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
 
         log_info['round'] = round
-        # wandb.log(log_info)
+        wandb.log(log_info)
 
         # for net_id, net in nets_this_round.items():
         #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
