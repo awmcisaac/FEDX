@@ -20,10 +20,22 @@ from losses import js_loss, nt_xent
 from model import init_nets
 from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank
 import ssl
+import re
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # record_data = None
 # matrix_data = None
+
+
+
+def get_gpu_memory():
+    free_gpu_info = os.popen('nvidia-smi -q -d Memory | grep -A4 GPU | grep Free').read()
+    tep = re.findall('.*: (.*) MiB', free_gpu_info)
+    gpu_dict = {}
+    for one in range(len(tep)):
+        gpu_dict[one] = int(tep[one])
+    gpu_id = sorted(gpu_dict.items(), key=lambda item: item[1])[-1][0]
+    os.environ.setdefault('CUDA_VISIBLE_DEVICES', str(gpu_id))
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -122,6 +134,9 @@ def train_net_fedx(
     train_iter = iter(train_dataloader)
     iter_num = len(train_dataloader) * epochs
 
+    if args.basis and round > 0:
+        op_feature = torch.load(save_dir+ str(1-net_id)+'_'+str(round-1)+'_'+'.pth')
+
     for batch_idx in range(iter_num):
         feature_all = []
         epoch_loss_collector = []
@@ -148,8 +163,37 @@ def train_net_fedx(
         loss_ours = 0
         # previous online-version
         # if round > 5:
+        if args.basis and round>0:
+            if len(proj1_original) < len(op_feature):
+                feature_tep = op_feature[:len(proj1_original)]
+                op_feature = op_feature[-(len(op_feature-len(proj1_original))):]
+                if args.svd:
+                    u, s, v = torch.svd(feature_tep)
+                    sigma = torch.diag_embed(s)
+                    b = torch.matmul(sigma, v.t())
 
-        # if args.basis:
+                else:
+                    q, r = torch.linalg.qr(feature_tep)
+                    b = r
+
+                if args.avg:
+                    if args.svd:
+                        u, s, v = torch.svd(proj1_original.detach())
+                        sigma = torch.diag_embed(s)
+                        b_me = torch.matmul(sigma, v.t())
+                        w = u
+                    else:
+                        q, r = torch.linalg.qr(proj1_original.detach())
+                        b_me = r
+                        w = q
+                    b_avg = (b + b_me) / 2
+                    f_label = torch.matmul(w, b_avg)
+                else:
+                    w = recreate_feature(proj1_original.detach(), b)
+                    f_label = torch.matmul(w, b)
+
+                loss_ours += kl_loss(proj1_original, f_label)
+
         #     _, op_proj1, op_pred1 = op_net(x1)
         #     q, r = torch.linalg.qr(op_proj1)
         #     q_, r_ = torch.linalg.qr(proj1_original)
@@ -200,12 +244,10 @@ def train_net_fedx(
 
             # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
-
-        op_loss = 0
             # _, op_proj1, op_pred1 = op_net(x1)
             # op_loss = kl_loss(proj1_original, op_proj1)
 
-        loss = loss_nt + loss_js + 0.1*loss_ours + op_loss
+        loss = loss_nt + loss_js + 0.1*loss_ours
         loss.backward()
         torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
         optimizer.step()
@@ -214,8 +256,6 @@ def train_net_fedx(
     feature_all = torch.cat(feature_all, dim=0)
     feature_all = feature_all.detach()
     torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+'.pth')
-    u, s, v = torch.svd(feature_all)
-    sigma = torch.diag_embed(s)
     # if round > 5:
     # base_dict = np.load('base_2.npy', allow_pickle=True).item()
     # for one in base_dict:
@@ -225,8 +265,6 @@ def train_net_fedx(
     #     else:
     #         b_dict[1-net_id] = None
 
-    b = torch.matmul(sigma, v.t())
-    net.b = b
     epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
     logger.info("Round: %d Loss: %f" % (round, epoch_loss))
     net.eval()
@@ -316,12 +354,12 @@ def local_train_net(
 
 if __name__ == "__main__":
 
-
+    # get_gpu_memory()
     args = get_args()
     args.aggregation = 0
-    args.distillation = 1
-    args.basis = 0
-    args.svd = 0
+    args.distillation = 0
+    args.basis = 1
+    args.svd = 1
     args.avg = 0
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -500,7 +538,7 @@ if __name__ == "__main__":
                 log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
 
         log_info['round'] = round
-        wandb.log(log_info)
+        # wandb.log(log_info)
 
         # for net_id, net in nets_this_round.items():
         #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
