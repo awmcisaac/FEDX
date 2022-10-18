@@ -192,12 +192,19 @@ def save_feature_bank(net, memory_data_loader, test_data_loader, name):
         test_bank = torch.cat(test_bank, dim=0).contiguous().cuda()
         test_labels = torch.tensor(test_data_loader.dataset.target, device=test_bank.device)
 
-    linear_ds = TensorDataset(feature_bank, feature_labels)
-    test_ds = TensorDataset(test_bank, test_labels)
+    linear_ds = TensorDataset(feature_bank.detach(), feature_labels)
+    test_ds = TensorDataset(test_bank.detach(), test_labels)
     torch.save(linear_ds, name+'train.pth')
     torch.save(test_ds, name +'test.pth')
 
 def test_featrue_bank(name, feature_size, label_size):
+
+    seed = 0
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
     linear_ds = torch.load(name+'train.pth')
     linear_ds_test = torch.load(name+'test.pth')
     linear_loader = DataLoader(linear_ds, batch_size=64, shuffle=True)
@@ -234,6 +241,7 @@ def test_featrue_bank(name, feature_size, label_size):
 
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
+    net.cuda()
     net.eval()
     feature_bank = []
 
@@ -329,6 +337,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
             download=True,
             target_transform=target_transform
         )
+
         val_ds = dl_obj(
             datadir,
             dataidxs=dataidxs,
@@ -337,6 +346,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
             download=False,
             target_transform=target_transform
         )
+
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
 
         train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=False, shuffle=True)

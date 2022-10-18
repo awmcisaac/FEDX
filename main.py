@@ -42,7 +42,7 @@ def get_args():
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=100000, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -57,12 +57,6 @@ def get_args():
     # record_data = pd.DataFrame([], columns=[i for i in range(args.out_dim)])
     # matrix_data = {}
     return args
-
-save_dir = 'ckpt_2_non_iid_aggregated/'
-model_dir = './models/' +save_dir
-if not os.path.exists(save_dir):
-    os.makedirs(save_dir)
-    os.makedirs(model_dir)
 
 
 def set_seed(seed):
@@ -133,7 +127,6 @@ def train_net_fedx(
             x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
             optimizer.zero_grad()
             target = target.long()
-
             try:
                 random_x, _, _, _ = random_dataloader.next()
             except:
@@ -149,16 +142,30 @@ def train_net_fedx(
             pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-
             feature_all.append(proj1_original.detach())
-
             loss_ours = 0
-            # for one in b_dict:
-            #     if one!=net_id:
-            #         if b_dict[one] != None:
-            #             u_tep = recreate_feature(proj1_original, b_dict[one])
-            #             projection_tep = torch.matmul(u_tep, b_dict[one]).detach()
-            #             loss_ours += kl_loss(proj1_original, projection_tep)
+            # previous online-version
+            # if round > 5:
+            _, op_proj1, op_pred1 = op_net(x1)
+            q, r = torch.linalg.qr(op_proj1)
+            q_, r_ = torch.linalg.qr(proj1_original)
+            r_avg = (r+r_)/2
+            projection_tep = torch.matmul(q_, r_avg).detach()
+            # q_tep = recreate_feature(proj1_original, r)
+            # projection_tep = torch.matmul(q_tep, r).detach()
+            loss_ours += kl_loss(proj1_original, projection_tep)
+
+                # u_op, s_op, v_op = torch.svd(op_proj1)
+                # sigma_op = torch.diag_embed(s_op)
+                # b_op = torch.matmul(sigma_op, v_op.t())
+                #
+                # u, s, v = torch.svd(proj1_original.detach())
+                #
+                # if s.norm() < s_op.norm():
+                #     u_tep = recreate_feature(proj1_original, b_op)
+                #     projection_tep = torch.matmul(u_tep, b_op).detach()
+                #     loss_ours += kl_loss(proj1_original, projection_tep)
+                # loss_ours += kl_loss(proj1_original, op_proj1)
 
             # Contrastive losses (local, global)
 
@@ -190,11 +197,13 @@ def train_net_fedx(
             # loss_supervised = ce_loss(pred1_original, target)
             # loss = loss_supervised
 
-            _, op_proj1, op_pred1 = op_net(x1)
-            op_loss = kl_loss(proj1_original, op_proj1)
+            op_loss = 0
+            # _, op_proj1, op_pred1 = op_net(x1)
+            # op_loss = kl_loss(proj1_original, op_proj1)
 
-            loss = loss_nt + loss_js + loss_ours +op_loss
+            loss = loss_nt + loss_js + 0.1*loss_ours + op_loss
             loss.backward()
+            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
@@ -203,13 +212,21 @@ def train_net_fedx(
     torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+str(epoch)+'.pth')
     u, s, v = torch.svd(feature_all)
     sigma = torch.diag_embed(s)
+    # if round > 5:
+    # base_dict = np.load('base_2.npy', allow_pickle=True).item()
+    # for one in base_dict:
+    #     if base_dict[one]['s'] > s.norm().item() and one+2 in base_dict:
+    #         b_dict[1-net_id] = base_dict[one+2]['b']
+    #         break
+    #     else:
+    #         b_dict[1-net_id] = None
+
     b = torch.matmul(sigma, v.t())
-    b_dict[net_id] = b
+    net.b = b
     epoch_loss = sum(epoch_loss_collector) / len(epoch_loss_collector)
     logger.info("Epoch: %d Loss: %f" % (epoch, epoch_loss))
     net.eval()
     logger.info(" ** Training complete **")
-    return b_dict
 
 def local_train_net(
     nets,
@@ -227,7 +244,6 @@ def local_train_net(
     if global_model:
         global_model.cuda()
     n_epoch = args.epochs
-    b_dict = {0: None, 1: None}
     for net_id, net in nets.items():
         dataidxs = net_dataidx_map[net_id]
         logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
@@ -235,7 +251,7 @@ def local_train_net(
         val_dl_local = val_dl_local_dict[net_id]
         op_net = nets[1-net_id]
         # op_net = None
-        b_dict = train_net_fedx(
+        train_net_fedx(
         net_id,
         net,
         global_model,
@@ -250,7 +266,6 @@ def local_train_net(
         round,
         device=device,
         op_net = op_net,
-        b_dict = b_dict
         )
 
     if global_model:
@@ -258,8 +273,14 @@ def local_train_net(
     return nets
 
 if __name__ == "__main__":
-    wandb.init(project='trial', name='2_clients_ours', entity='joey61')
+
+
     args = get_args()
+    args.aggregation = 1
+    args.distillation = 0
+    args.basis = 0
+    args.svd = 0
+    args.avg = 0
     # Create directory to save log and model
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
@@ -267,6 +288,30 @@ if __name__ == "__main__":
         "%Y-%m-%d-%H%M-%S"
     )
 
+    if args.aggregation:
+        method = 'weights_aggregation'
+    elif args.distillation:
+        method = 'distillation_aggregation'
+    elif args.basis:
+        method = 'ours'
+        if args.svd:
+            method += '_svd'
+        else:
+            method += '_qr'
+        if args.avg:
+            method += '_avg'
+        else:
+            method += '_semantics'
+    args.name = '{}_clients_{}_alpha_{}'.format(args.n_parties, args.beta, method)
+
+    save_dir = args.name
+    model_dir = './models/' + save_dir
+
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+        os.makedirs(model_dir)
+
+    # wandb.init(project='Basis_Aggregation_{}'.args.dataset, name=args.name, entity='joey61')
     # Save arguments
     with open(os.path.join(args.logdir, argument_path), "w") as f:
         json.dump(str(args), f)
@@ -296,6 +341,7 @@ if __name__ == "__main__":
     else:
         for i in range(args.comm_round):
             party_list_rounds.append(party_list)
+            # party_list_rounds.append(party_list[:1])
 
     n_classes = len(np.unique(y_train))
 
@@ -309,12 +355,11 @@ if __name__ == "__main__":
     data_size = len(test_ds_global)
 
     # Initializing net from each local party.
-    logger.info("Initializing nets")
+    # logger.info("Initializing nets")
     nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
-    global_model = None
-    # global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
 
-    # global_model = global_models[0]
+    global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
+    global_model = global_models[0]
     n_comm_rounds = args.comm_round
 
     train_dl_local_dict = {}
@@ -325,7 +370,6 @@ if __name__ == "__main__":
     # def target_transform(label):
     #     label = permute_record[label]
     #     return label
-
     # Distribute dataset and dataloader to each local party
     # We use two dataloaders for training FedX (train_dataloader, random_dataloader), 
     # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
@@ -344,15 +388,20 @@ if __name__ == "__main__":
         net_id += 1
 
     # Main training communication loop.
+    # state_dict = torch.load('./models/ckpt_1_self_teaching/local_model_0.pth')
+    # nets[1].load_state_dict(state_dict)
     for round in range(n_comm_rounds):
         logger.info("in comm round:" + str(round))
         party_list_this_round = party_list_rounds[round]
-
         # Download global model from (virtual) central server
-        global_w = global_model.state_dict()
+
         nets_this_round = {k: nets[k] for k in party_list_this_round}
-        for net in nets_this_round.values():
-            net.load_state_dict(global_w)
+
+        if args.aggregation:
+            global_w = global_model.state_dict()
+            for net in nets_this_round.values():
+                net.load_state_dict(global_w)
+
         # Train local model with local data
         nets = local_train_net(
             nets_this_round,
@@ -371,46 +420,56 @@ if __name__ == "__main__":
         fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
 
 
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     if net_id == 0:
-        #         global_v = net.v * fed_avg_freqs[net_id]
-        #     else:
-        #         global_v += net.v * fed_avg_freqs[net_id]
-        #
-        # for net_id, net in enumerate(nets_this_round.values()):
-        #     net.v = global_v
+            # for net_id, net in enumerate(nets_this_round.values()):
+            #     if net_id == 0:
+            #         global_v = net.v * fed_avg_freqs[net_id]
+            #     else:
+            #         global_v += net.v * fed_avg_freqs[net_id]
+            #
+            # for net_id, net in enumerate(nets_this_round.values()):
+            #     net.v = global_v
 
+        log_info = {}
+        if args.aggregation:
+            for net_id, net in enumerate(nets_this_round.values()):
+                net_para = net.state_dict()
+                if net_id == 0:
+                    for key in net_para:
+                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+                else:
+                    for key in net_para:
+                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
 
-        # weights aggregation part
-        # Averaging the local models' parameters to get global model
-        for net_id, net in enumerate(nets_this_round.values()):
-            net_para = net.state_dict()
-            if net_id == 0:
-                for key in net_para:
-                    global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-            else:
-                for key in net_para:
-                    global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+            global_model.load_state_dict(copy.deepcopy(global_w))
+            test_acc_1, test_acc_5 = test_linear_fedX(global_model, val_dl_global, test_dl)
+            log_info['acc_top1_global'] = test_acc_1
+            log_info['acc_top5_global'] = test_acc_5
+            logger.info(">> Global Model Test accuracy Top1: %f" % test_acc_1)
+            logger.info(">> Global Model Test accuracy Top5: %f" % test_acc_5)
 
-        global_model.load_state_dict(copy.deepcopy(global_w))
-        global_model.cuda()
+        else:
+            for net_id, net in enumerate(nets_this_round.values()):
+                test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_global, test_dl)
+                logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
+                logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
+                log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
+                log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
 
-        # Evaluating the global model
-        # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[0], val_dl_global, test_dl)
-        # logger.info(">> Private Model 0 Test accuracy Top1: %f" % test_acc_1)
-        # logger.info(">> Private Model 0 Test accuracy Top5: %f" % test_acc_5)
+        log_info['round'] = round
+        wandb.log(log_info)
 
-        # test_acc_1, test_acc_5 = test_linear_fedX(nets_this_round[1], val_dl_global, test_dl)
-        # logger.info(">> Private Model 1 Test accuracy Top1: %f" % test_acc_1)
-        # logger.info(">> Private Model 1 Test accuracy Top5: %f" % test_acc_5)
-        for net_id, net in nets.items():
-            save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
+        # for net_id, net in nets_this_round.items():
+        #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
 
     # record_data.to_csv('data.csv')
     # np.save('matrix.npy', matrix_data)
 
     # Save the final round's local and global models
-    # torch.save(global_model.state_dict(), args.modeldir + "globalmodel" + args.log_file_name + ".pth")
-    for net_id,  net in nets.items():
-        torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
+    if args.aggregation:
+        torch.save(global_model.state_dict(), args.modeldir + save_dir + "global_model.pth")
+
+    else:
+        for net_id,  net in nets_this_round.items():
+            torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
+
 

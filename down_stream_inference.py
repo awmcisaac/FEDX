@@ -9,7 +9,7 @@ import datetime
 import json
 import os
 import random
-
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.optim as optim
@@ -21,7 +21,6 @@ from model import init_nets
 from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_featrue_bank
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
-
 
 # record_data = None
 # matrix_data = None
@@ -297,10 +296,66 @@ if __name__ == "__main__":
     #     logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
     #     logger.info(">> Private Model {} Test accuracy Top5 {}".format(i, test_acc_5))
 
-    for i in range(len(nets)):
-        save_dir = './ckpt_2_non_iid_individual_guided/{}_49_'.format(i)
+    # save_dir = './ckpt_1_self_taught_KD/0_49_'
+    # test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
+    # logger.info(">> Private Model {} Test accuracy Top1 {}".format(0, test_acc_1))
+
+    # acc = np.load('teacher_student_acc_data.npy', allow_pickle=True).item()
+    acc = {}
+    # acc_teacher = []
+    # acc_student = []
+    acc_KD = []
+    acc_QR = []
+    acc_QR_avg = []
+    acc_teacher = []
+
+
+    for epoch in range(50):
+        save_dir = './ckpt_1_self_teaching/{}_{}_'.format(0, epoch)
         test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
-        logger.info(">> Private Model {} Test accuracy Top1 {}".format(i, test_acc_1))
+        logger.info(">> Private Model {} Test accuracy Top1 {}".format(0, test_acc_1))
+        acc_teacher.append(test_acc_1)
+
+        save_dir = './ckpt_1_self_taught_KD/{}_{}_'.format(0, epoch)
+        test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
+        logger.info(">> Private Model {} Test accuracy Top1 {}".format(1, test_acc_1))
+        acc_KD.append(test_acc_1)
+
+        save_dir = './ckpt_1_self_taught_QR/{}_{}_'.format(0, epoch)
+        test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
+        logger.info(">> Private Model {} Test accuracy Top1 {}".format(0, test_acc_1))
+        acc_QR.append(test_acc_1)
+
+        save_dir = './ckpt_1_self_taught_QR_avg/{}_{}_'.format(0, epoch)
+        test_acc_1, test_acc_5 = test_featrue_bank(save_dir, 512, 10)
+        logger.info(">> Private Model {} Test accuracy Top1 {}".format(0, test_acc_1))
+        acc_QR_avg.append(test_acc_1)
+        print(epoch)
+
+    # acc = {
+    #     'teacher': acc_teacher,
+    #     'student': acc_student,
+    # }
+    acc['original'] = acc_teacher
+    acc['KD'] = acc_KD
+    acc['QR'] = acc_QR
+    acc['QR_avg'] = acc_QR_avg
+    np.save('acc_data.npy', acc)
+    acc_teacher = acc['original']
+    acc_KD = acc['KD']
+    acc_QR = acc['QR']
+    acc_QR_avg = acc['QR_avg']
+
+    # plt.plot(acc_student, label = 'student')
+    # plt.plot(acc_teacher, label='teacher')
+    plt.plot(acc_KD, label = 'KD')
+    plt.plot(acc_QR, label='QR')
+    plt.plot(acc_QR_avg, label = 'QR_AVG')
+    plt.plot(acc_teacher, label = 'Original')
+    plt.legend()
+    plt.savefig('compare.png')
+    plt.show()
+
 
     # global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
 

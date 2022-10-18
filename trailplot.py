@@ -90,19 +90,26 @@ def unit_symbol(data2):
 
     return symble, data2
 
-v1_collection = []
-v2_collection = []
+s1_collection = []
+s2_collection = []
+b1_collection = []
+b2_collection = []
+
 symbol1_collection = []
 symbol2_collection = []
 
 f1_distance = []
 f2_distance = []
 
-for round in range(max_round):
+info_1 = {}
+info_2 = {}
+
+
+for round in range(5, max_round):
     # data1 = torch.load('./iid_ckpt/ckpt_aggregated/0_{}_0.pth'.format(str(round)))
     # data2 = torch.load('./iid_ckpt/ckpt_aggregated/1_{}_0.pth'.format(str(round)))
-    data1 = torch.load('./ckpt_2_non_iid_ours/0_{}_0.pth'.format(str(round)))
-    data2 = torch.load('./ckpt_2_non_iid_ours/1_{}_0.pth'.format(str(round)))
+    data1 = torch.load('./ckpt_2_individual/0_{}_0.pth'.format(str(round)))
+    data2 = torch.load('./ckpt_2_individual/1_{}_0.pth'.format(str(round)))
 
     # data = data.transpose(-2, -1)
     # data_ = data_.transpose(-2, -1)
@@ -116,17 +123,41 @@ for round in range(max_round):
     b1 = torch.matmul(s1, v1.t())
     b2 = torch.matmul(s2, v2.t())
 
-    dis = dis_base(u1, b1, b2, data1, select)
-    f1_distance.append(dis)
-    dis = dis_base(u2, b2, b1, data2, select)
-    f2_distance.append(dis)
+    info_1[round] = {'s': s1.norm().item(), 'b': b1}
+    info_2[round] = {'s': s2.norm().item(), 'b': b2}
+
+    s1_collection.append(s1.norm().item())
+    s2_collection.append(s2.norm().item())
+
+    # info[round] = {'s': }
+
+    b1_collection.append(torch.norm(b1).item())
+    b2_collection.append(torch.norm(b2).item())
+
+    # dis = dis_base(u1, b1, b2, data1, select)
+    # f1_distance.append(dis)
+    # dis = dis_base(u2, b2, b1, data2, select)
+    # f2_distance.append(dis)
     #
     # b1_pre = b1
     # b2_pre = b2
-plt.plot(f1_distance, label = 'client1')
-plt.plot(f2_distance, label = 'client2')
+# plt.plot(f1_distance, label = 'client1')
+# plt.plot(f2_distance, label = 'client2')
+# plt.plot(s1_collection, label = 'client1')
+# plt.plot(s2_collection, label = 'client2')
+#
+# plt.legend()
+# plt.show()
+
+np.save('base_1.npy', info_1)
+np.save('base_2.npy', info_2)
+
+plt.plot(b1_collection, label = 'client1')
+plt.plot(b2_collection, label = 'client2')
+
 plt.legend()
 plt.show()
+
 # print(f2_distance[-1])
 
     # symbol1, v1 = unit_symbol(v1)
