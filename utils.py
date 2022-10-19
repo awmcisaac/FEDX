@@ -95,11 +95,11 @@ def load_svhn_data(datadir):
 
 def record_net_data_stats(y_train, net_dataidx_map, logdir):
     net_cls_counts = {}
-
     for net_i, dataidx in net_dataidx_map.items():
-        unq, unq_cnt = np.unique(y_train[dataidx], return_counts=True)
-        tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}
-        net_cls_counts[net_i] = tmp
+        if isinstance(net_i, int):
+            unq, unq_cnt = np.unique(y_train[dataidx], return_counts=True)
+            tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}
+            net_cls_counts[net_i] = tmp
 
     data_list = []
     for net_id, data in net_cls_counts.items():
@@ -155,10 +155,18 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4):
             net_dataidx_map[j] = idx_batch[j]
 
     public_idx = np.random.choice(n_train, int(2*n_train/50), replace=False)
+
+    private_test_idx = {}
+
     for one in net_dataidx_map:
         net_dataidx_map[one] = list(set(net_dataidx_map[one]).difference(set(public_idx)))
         np.random.shuffle(net_dataidx_map[one])
+        data_num = len(net_dataidx_map[one])
+        test_num = int(data_num/10)
+        private_test_idx[one] = net_dataidx_map[one][-test_num:]
+        net_dataidx_map[one] = net_dataidx_map[one][:data_num-test_num]
     net_dataidx_map['public'] = public_idx
+    net_dataidx_map['private_test'] = private_test_idx
     traindata_cls_counts = record_net_data_stats(y_train, net_dataidx_map, logdir)
     return (X_train, y_train, X_test, y_test, net_dataidx_map, traindata_cls_counts)
 
@@ -351,7 +359,6 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
         )
 
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
-
         train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=False, shuffle=True)
         test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
         val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)

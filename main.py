@@ -47,7 +47,7 @@ def get_args():
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default=50, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default=100, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
@@ -162,11 +162,10 @@ def train_net_fedx(
             feature_all.append(proj1_original.detach())
             loss_ours = 0
             # previous online-version
-            # if round > 5:
-            if args.basis and round>0:
+            if args.basis and round>5:
                 if len(proj1_original) < len(op_feature):
                     feature_tep = op_feature[:len(proj1_original)]
-                    op_feature = op_feature[-(len(op_feature-len(proj1_original))):]
+                    op_feature = op_feature[-(len(op_feature)-len(proj1_original)):]
                     if args.svd:
                         u, s, v = torch.svd(feature_tep)
                         sigma = torch.diag_embed(s)
@@ -330,6 +329,7 @@ def local_train_net(
         logger.info("Training network %s. n_training: %d" % (str(net_id), len(dataidxs)))
         train_dl_local = train_dl_local_dict[net_id]
         val_dl_local = val_dl_local_dict[net_id]
+        test_dl_local = test_dl[net_id]
         op_net = nets[1-net_id]
         # op_net = None
         train_net_fedx(
@@ -338,7 +338,7 @@ def local_train_net(
         global_model,
         train_dl_local,
         val_dl_local,
-        test_dl,
+        test_dl_local,
         n_epoch,
         args.lr,
         args.optimizer,
@@ -357,11 +357,11 @@ if __name__ == "__main__":
 
     # get_gpu_memory()
     args = get_args()
-    args.aggregation = 1
+    args.aggregation =0
     args.distillation = 0
-    args.basis = 0
-    args.svd = 0
-    args.avg = 0
+    args.basis = 1
+    args.svd = 1
+    args.avg = 1
     # Create directory to save log and model
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
@@ -427,13 +427,13 @@ if __name__ == "__main__":
     n_classes = len(np.unique(y_train))
 
     # Get global dataloader (only used for evaluation)
-    (train_dl_global, val_dl_global, test_dl, train_ds_global, _, test_ds_global) = get_dataloader(
-        args.dataset, args.datadir, args.batch_size, args.batch_size * 2
-    )
+    # (train_dl_global, val_dl_global, test_dl, train_ds_global, _, test_ds_global) = get_dataloader(
+    #     args.dataset, args.datadir, args.batch_size, args.batch_size * 2
+    # )
 
-    print("len train_dl_global:", len(train_ds_global))
-    train_dl = None
-    data_size = len(test_ds_global)
+    # print("len train_dl_global:", len(train_ds_global))
+    # train_dl = None
+    # data_size = len(test_ds_global)
 
     # Initializing net from each local party.
     # logger.info("Initializing nets")
@@ -445,6 +445,7 @@ if __name__ == "__main__":
 
     train_dl_local_dict = {}
     val_dl_local_dict = {}
+    test_dl_local_dict = {}
     net_id = 0
     permute_record = list(range(10))
     np.random.shuffle(permute_record)
@@ -464,8 +465,10 @@ if __name__ == "__main__":
         #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
         #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
         #     )
+        _, test_dl_local, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size //2, args.batch_size*2, net_dataidx_map['private_test'][net_id])
         train_dl_local_dict[net_id] = train_dl_local
         val_dl_local_dict[net_id] = val_dl_local
+        test_dl_local_dict[net_id] = test_dl_local
         net_id += 1
 
     public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size//2, args.batch_size * 2, net_dataidx_map['public'])
@@ -491,8 +494,8 @@ if __name__ == "__main__":
             net_dataidx_map,
             train_dl_local_dict,
             val_dl_local_dict,
-            train_dl=train_dl,
-            test_dl=test_dl,
+            train_dl=None,
+            test_dl=test_dl_local_dict,
             global_model=global_model,
             device=device,
             round=round
@@ -524,22 +527,17 @@ if __name__ == "__main__":
                         global_w[key] += net_para[key] * fed_avg_freqs[net_id]
 
             global_model.load_state_dict(copy.deepcopy(global_w))
-            test_acc_1, test_acc_5 = test_linear_fedX(global_model, val_dl_global, test_dl)
-            log_info['acc_top1_global'] = test_acc_1
-            log_info['acc_top5_global'] = test_acc_5
-            logger.info(">> Global Model Test accuracy Top1: %f" % test_acc_1)
-            logger.info(">> Global Model Test accuracy Top5: %f" % test_acc_5)
 
-        else:
+        if round // 5 == 0:
             for net_id, net in enumerate(nets_this_round.values()):
-                test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_global, test_dl)
+                test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
                 logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
                 logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
                 log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
                 log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
 
-        log_info['round'] = round
-        wandb.log(log_info)
+            log_info['round'] = round
+            wandb.log(log_info)
 
         # for net_id, net in nets_this_round.items():
         #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
