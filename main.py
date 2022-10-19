@@ -47,7 +47,7 @@ def get_args():
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default=100, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default=101, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
@@ -357,7 +357,7 @@ if __name__ == "__main__":
 
     # get_gpu_memory()
     args = get_args()
-    args.aggregation =0
+    args.aggregation = 0
     args.distillation = 0
     args.basis = 1
     args.svd = 1
@@ -528,7 +528,7 @@ if __name__ == "__main__":
 
             global_model.load_state_dict(copy.deepcopy(global_w))
 
-        if round // 5 == 0:
+        if round % 5 == 0:
             for net_id, net in enumerate(nets_this_round.values()):
                 test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
                 logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
