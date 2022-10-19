@@ -131,68 +131,83 @@ def train_net_fedx(
     # Random dataloader for relational loss
     random_loader = copy.deepcopy(train_dataloader)
     random_dataloader = iter(random_loader)
-    train_iter = iter(train_dataloader)
-    iter_num = len(train_dataloader) * epochs
+    # train_iter = iter(train_dataloader)
+    # iter_num = len(train_dataloader) * epochs
 
     if args.basis and round > 0:
         op_feature = torch.load(save_dir+ str(1-net_id)+'_'+str(round-1)+'_'+'.pth')
 
-    for batch_idx in range(iter_num):
+    for epoch in range(epochs):
         feature_all = []
         epoch_loss_collector = []
-        x1, x2, target, _ = train_iter.next()
-        x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
-        # for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
-        optimizer.zero_grad()
-        target = target.long()
-        try:
-            random_x, _, _, _ = random_dataloader.next()
-        except:
-            random_dataloader = iter(random_loader)
-            random_x, _, _, _ = random_dataloader.next()
-        random_x = random_x.cuda()
-        all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
-        _, proj1, pred1 = net(all_x)
-        # with torch.no_grad():
-        #     _, proj2, pred2 = global_net(all_x)
+        for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
+            x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
+            # for batch_idx, (x1, x2, target, _) in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            target = target.long()
+            try:
+                random_x, _, _, _ = random_dataloader.next()
+            except:
+                random_dataloader = iter(random_loader)
+                random_x, _, _, _ = random_dataloader.next()
+            random_x = random_x.cuda()
+            all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
+            _, proj1, pred1 = net(all_x)
+            # with torch.no_grad():
+            #     _, proj2, pred2 = global_net(all_x)
 
-        # pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-        proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-        # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-        feature_all.append(proj1_original.detach())
-        loss_ours = 0
-        # previous online-version
-        # if round > 5:
-        if args.basis and round>0:
-            if len(proj1_original) < len(op_feature):
-                feature_tep = op_feature[:len(proj1_original)]
-                op_feature = op_feature[-(len(op_feature-len(proj1_original))):]
-                if args.svd:
-                    u, s, v = torch.svd(feature_tep)
-                    sigma = torch.diag_embed(s)
-                    b = torch.matmul(sigma, v.t())
-
-                else:
-                    q, r = torch.linalg.qr(feature_tep)
-                    b = r
-
-                if args.avg:
+            # pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            feature_all.append(proj1_original.detach())
+            loss_ours = 0
+            # previous online-version
+            # if round > 5:
+            if args.basis and round>0:
+                if len(proj1_original) < len(op_feature):
+                    feature_tep = op_feature[:len(proj1_original)]
+                    op_feature = op_feature[-(len(op_feature-len(proj1_original))):]
                     if args.svd:
-                        u, s, v = torch.svd(proj1_original.detach())
+                        u, s, v = torch.svd(feature_tep)
                         sigma = torch.diag_embed(s)
-                        b_me = torch.matmul(sigma, v.t())
-                        w = u
-                    else:
-                        q, r = torch.linalg.qr(proj1_original.detach())
-                        b_me = r
-                        w = q
-                    b_avg = (b + b_me) / 2
-                    f_label = torch.matmul(w, b_avg)
-                else:
-                    w = recreate_feature(proj1_original.detach(), b)
-                    f_label = torch.matmul(w, b)
+                        b = torch.matmul(sigma, v.t())
 
-                loss_ours += kl_loss(proj1_original, f_label)
+                    else:
+                        q, r = torch.linalg.qr(feature_tep)
+                        b = r
+
+                    if args.avg:
+                        if args.svd:
+                            u, s, v = torch.svd(proj1_original.detach())
+                            sigma = torch.diag_embed(s)
+                            b_me = torch.matmul(sigma, v.t())
+                            w = u
+                        else:
+                            q, r = torch.linalg.qr(proj1_original.detach())
+                            b_me = r
+                            w = q
+                        b_avg = (b + b_me) / 2
+                        f_label = torch.matmul(w, b_avg)
+                    else:
+                        w = recreate_feature(proj1_original.detach(), b)
+                        f_label = torch.matmul(w, b)
+
+                    loss_ours += kl_loss(proj1_original, f_label)
+            nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
+            # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
+            # loss_nt = nt_local + nt_global
+            loss_nt = nt_local
+
+            # Relational losses (local, global)
+            # js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
+            js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
+            # loss_js = js_global + js_local
+            loss_js = js_local
+            loss = loss_nt + loss_js + 0.1*loss_ours
+            loss.backward()
+            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
+            optimizer.step()
+            epoch_loss_collector.append(loss.item())
 
         #     _, op_proj1, op_pred1 = op_net(x1)
         #     q, r = torch.linalg.qr(op_proj1)
@@ -222,16 +237,7 @@ def train_net_fedx(
             # global record_data, matrix_data
             # record_data.loc[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
             # matrix_data[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = v.cpu().numpy()
-        nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
-            # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
-            # loss_nt = nt_local + nt_global
-        loss_nt = nt_local
 
-            # Relational losses (local, global)
-            # js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
-        js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
-            # loss_js = js_global + js_local
-        loss_js = js_local
 
             # if hasattr(net, 'v'):
             #     v_global = net.v
@@ -247,11 +253,6 @@ def train_net_fedx(
             # _, op_proj1, op_pred1 = op_net(x1)
             # op_loss = kl_loss(proj1_original, op_proj1)
 
-        loss = loss_nt + loss_js + 0.1*loss_ours
-        loss.backward()
-        torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
-        optimizer.step()
-        epoch_loss_collector.append(loss.item())
 
     feature_all = torch.cat(feature_all, dim=0)
     feature_all = feature_all.detach()
@@ -356,10 +357,10 @@ if __name__ == "__main__":
 
     # get_gpu_memory()
     args = get_args()
-    args.aggregation = 0
+    args.aggregation = 1
     args.distillation = 0
-    args.basis = 1
-    args.svd = 1
+    args.basis = 0
+    args.svd = 0
     args.avg = 0
     # Create directory to save log and model
     mkdirs(args.logdir)
@@ -384,14 +385,14 @@ if __name__ == "__main__":
             method += '_semantics'
     args.name = '{}_clients_{}_alpha_{}'.format(args.n_parties, args.beta, method)
 
-    save_dir = args.name
+    save_dir = args.name + '/'
     model_dir = './models/' + save_dir
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
         os.makedirs(model_dir)
 
-    wandb.init(project='Basis_Aggregation_{}'.args.dataset, name=args.name, entity='joey61')
+    wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='joey61')
     # Save arguments
     with open(os.path.join(args.logdir, argument_path), "w") as f:
         json.dump(str(args), f)
