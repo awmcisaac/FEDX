@@ -361,7 +361,7 @@ if __name__ == "__main__":
     args.distillation = 0
     args.basis = 1
     args.svd = 1
-    args.avg = 1
+    args.avg = 0
     # Create directory to save log and model
     mkdirs(args.logdir)
     mkdirs(args.modeldir)
@@ -392,7 +392,7 @@ if __name__ == "__main__":
         os.makedirs(save_dir)
         os.makedirs(model_dir)
 
-    wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='joey61')
+    wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
     # Save arguments
     with open(os.path.join(args.logdir, argument_path), "w") as f:
         json.dump(str(args), f)
@@ -528,7 +528,7 @@ if __name__ == "__main__":
 
             global_model.load_state_dict(copy.deepcopy(global_w))
 
-        if round % 5 == 0:
+        if round % 5 == 0 or round > 90:
             for net_id, net in enumerate(nets_this_round.values()):
                 test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
                 logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
