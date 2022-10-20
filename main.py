@@ -305,6 +305,114 @@ def feature_distillation(
             torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
 
+def p2p_train_nets(
+        nets,
+        args,
+        net_dataidx_map,
+        train_dl_local_dict,
+        val_dl_local_dict,
+        train_dl=None,
+        test_dl=None,
+        global_model=None,
+        prev_model_pool=None,
+        round=None,
+        device="cpu",
+):
+
+    logger.info("Training {} networks".format(len(nets)))
+    iter_list =[]
+    for one in train_dl_local_dict:
+        iter_list.append(len(train_dl_local_dict[one]))
+    iter_num = int(sum(iter_list)/len(iter_list))
+
+
+    optimizer_dict = {}
+    for net_id, net in nets.items():
+        net.cuda()
+        if args.optimizer == "adam":
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, weight_decay=args.reg)
+        elif args.optimizer == "amsgrad":
+            optimizer = optim.Adam(
+                filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, weight_decay=args.reg, amsgrad=True
+            )
+        elif args.optimizer == "sgd":
+            optimizer = optim.SGD(
+                filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, momentum=0.9, weight_decay=args.reg
+            )
+        optimizer_dict[net_id] = optimizer
+
+    kl_loss = torch.nn.MSELoss()
+    loss_dict = {}
+    # feature_dict = {}
+    projection_dict = {}
+    b_dict = {}
+    w_dict = {}
+    loss_record = {i:[] for i in nets}
+    for batch_id in range(iter_num):
+        for net_id, net in nets.items():
+            net.train()
+            random_loader = copy.deepcopy(train_dl_local_dict[net_id])
+
+            x1, x2, target, _ = iter(train_dl_local_dict[net_id]).next()
+            x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
+            optimizer_dict[net_id].zero_grad()
+            target = target.long
+            random_dataloader = iter(random_loader)
+            random_x, _, _, _ = random_dataloader.next()
+            random_x = random_x.cuda()
+            all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
+            feature, proj, pred = net(all_x)
+            proj_original, proj_pos, proj_random = proj.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            feature_original, _, _ = feature.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            # feature_dict[net_id] = feature_original
+            projection_dict[net_id] = proj_original
+            nt_local = nt_xent(proj_original, proj_pos, args.temperature)
+            loss_nt = nt_local
+            js_local = js_loss(proj_original, proj_pos, proj_random, args.temperature, args.ts)
+            loss_js = js_local
+            loss_dict[net_id] = loss_nt + loss_js
+            if args.basis:
+                if args.svd:
+                    u, s, v = torch.svd(proj_original.detach())
+                    sigma = torch.diag_embed(s)
+                    b = torch.matmul(sigma, v.t())
+                    w = u
+                else:
+                    w, b = torch.linalg.qr(proj_original.detach())
+                w_dict[net_id] = w
+                b_dict[net_id] = b
+
+        if args.basis and round > 2:
+            if args.avg:
+                b_avg = []
+                for net_id, b in b_dict.items():
+                    b_avg.append(b)
+                b_avg = sum(b_avg)/len(b_avg)
+                for net_id, projection in projection_dict.items():
+                    proj_label = torch.matmul(w_dict[net_id], b_avg)
+                    loss_ours = kl_loss(projection, proj_label.detach())
+                    loss_dict[net_id] += 0.5*loss_ours
+
+            else:
+                for net_id, projection in projection_dict.items():
+                    for net_op, b_op in b_dict.items():
+                        if net_id!=net_op:
+                            proj_label = recreate_feature(projection, b_op)
+                            loss_ours = kl_loss(projection, proj_label.detach())
+                            loss_dict[net_id] += 0.5*loss_ours
+
+        for net_id, optimizer in optimizer_dict.items():
+            loss_dict[net_id].backward()
+            loss_record[net_id].append(loss_dict[net_id].item())
+            torch.nn.utils.clip_grad_norm(nets[net_id].parameters(), max_norm=1, norm_type=2)
+            optimizer.step()
+            nets[net_id].eval()
+
+    for net_id, loss_list in loss_record.items():
+        loss_avg = sum(loss_list)/len(loss_list)
+        logger.info("Round: %d Client %d Loss: %f" % (round, net_id, loss_avg))
+    logger.info(" ** Training complete **")
+    return nets
 
 def local_train_net(
     nets,
@@ -356,7 +464,7 @@ if __name__ == "__main__":
     # get_gpu_memory()
     args = get_args()
     method_list = [(1,0,0,0,0),(0,1,0,0,0),(0,0,0,0,0),(0,0,1,0,0),(0,0,1,0,1),(0,0,1,1,0),(0,0,1,1,1)]
-    for one in method_list[:3]:
+    for one in method_list[:]:
         args.aggregation, args.distillation, args.basis, args.svd, args.avg = one
         # Create directory to save log and model
         mkdirs(args.logdir)
@@ -390,7 +498,7 @@ if __name__ == "__main__":
             os.makedirs(save_dir)
             os.makedirs(model_dir)
 
-        wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
+        # wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
         # Save arguments
         with open(os.path.join(args.logdir, argument_path), "w") as f:
             json.dump(str(args), f)
@@ -477,7 +585,6 @@ if __name__ == "__main__":
             logger.info("in comm round:" + str(round))
             party_list_this_round = party_list_rounds[round]
             # Download global model from (virtual) central server
-
             nets_this_round = {k: nets[k] for k in party_list_this_round}
 
             if args.aggregation:
@@ -488,7 +595,8 @@ if __name__ == "__main__":
             # Train local model with local data
             import time
             start_time = time.time()
-            nets = local_train_net(
+            # if args.basis:
+            nets = p2p_train_nets(
                 nets_this_round,
                 args,
                 net_dataidx_map,
@@ -500,7 +608,19 @@ if __name__ == "__main__":
                 device=device,
                 round=round
             )
-
+            # else:
+            #     nets = local_train_net(
+            #         nets_this_round,
+            #         args,
+            #         net_dataidx_map,
+            #         train_dl_local_dict,
+            #         val_dl_local_dict,
+            #         train_dl=None,
+            #         test_dl=test_dl_local_dict,
+            #         global_model=global_model,
+            #         device=device,
+            #         round=round
+            #     )
             if args.distillation:
                 feature_distillation(
                     nets_this_round,
@@ -509,7 +629,6 @@ if __name__ == "__main__":
                     device = device,
                     round = round
                 )
-
 
             total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
             fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
@@ -538,7 +657,7 @@ if __name__ == "__main__":
             feature_distance = test_feature_distance(nets[0], nets[1], test_dl)
             log_info['feature_dis'] = feature_distance
             log_info['round'] = round
-            wandb.log(log_info)
+            # wandb.log(log_info)
 
             # for net_id, net in nets_this_round.items():
             #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')

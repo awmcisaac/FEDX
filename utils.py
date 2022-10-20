@@ -372,7 +372,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_lev
         )
 
         test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
-        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=False, shuffle=True)
+        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=True, shuffle=True)
         test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
         val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)
 
