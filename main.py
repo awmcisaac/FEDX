@@ -45,7 +45,7 @@ def get_args():
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default=26, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default = 51, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
@@ -498,7 +498,7 @@ if __name__ == "__main__":
             os.makedirs(save_dir)
             os.makedirs(model_dir)
 
-        # wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
+        wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
         # Save arguments
         with open(os.path.join(args.logdir, argument_path), "w") as f:
             json.dump(str(args), f)
@@ -657,7 +657,7 @@ if __name__ == "__main__":
             feature_distance = test_feature_distance(nets[0], nets[1], test_dl)
             log_info['feature_dis'] = feature_distance
             log_info['round'] = round
-            # wandb.log(log_info)
+            wandb.log(log_info)
 
             # for net_id, net in nets_this_round.items():
             #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
