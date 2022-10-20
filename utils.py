@@ -251,6 +251,19 @@ def test_featrue_bank(name, feature_size, label_size):
     return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
 
 
+def test_feature_distance(net1, net2, test_data_loader):
+    net1.cuda()
+    net2.cuda()
+    distance_list = []
+    loss = torch.nn.MSELoss()
+    with torch.no_grad():
+        for data, _, target, _ in test_data_loader:
+            feature1, proj1, pred1 = net1(data.cuda(non_blocking = True))
+            feature2, proj2, pred2 = net2(data.cuda(non_blocking=True))
+            distance_list.append(loss(feature1, feature2).item())
+
+    return sum(distance_list)/len(distance_list)
+
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
     net.cuda()

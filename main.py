@@ -18,15 +18,13 @@ import pandas as pd
 import copy
 from losses import js_loss, nt_xent
 from model import init_nets
-from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank
+from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_feature_distance
 import ssl
 import re
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # record_data = None
 # matrix_data = None
-
-
 
 def get_gpu_memory():
     free_gpu_info = os.popen('nvidia-smi -q -d Memory | grep -A4 GPU | grep Free').read()
@@ -39,7 +37,7 @@ def get_gpu_memory():
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="resnet18", help="neural network used in training")
+    parser.add_argument("--model", type=str, default="lenet", help="neural network used in training")
     parser.add_argument("--dataset", type=str, default="cifar10", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
@@ -47,14 +45,14 @@ def get_args():
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default=101, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default=26, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=100000, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -357,200 +355,204 @@ if __name__ == "__main__":
 
     # get_gpu_memory()
     args = get_args()
-    args.aggregation = 0
-    args.distillation = 0
-    args.basis = 1
-    args.svd = 1
-    args.avg = 0
-    # Create directory to save log and model
-    mkdirs(args.logdir)
-    mkdirs(args.modeldir)
-    argument_path = f"{args.dataset}-{args.batch_size}-{args.n_parties}-{args.temperature}-{args.tt}-{args.ts}-{args.epochs}_arguments-%s.json" % datetime.datetime.now().strftime(
-        "%Y-%m-%d-%H%M-%S"
-    )
-
-    if args.aggregation:
-        method = 'weights_aggregation'
-    elif args.distillation:
-        method = 'distillation_aggregation'
-    elif args.basis:
-        method = 'ours'
-        if args.svd:
-            method += '_svd'
-        else:
-            method += '_qr'
-        if args.avg:
-            method += '_avg'
-        else:
-            method += '_semantics'
-    args.name = '{}_clients_{}_alpha_{}'.format(args.n_parties, args.beta, method)
-
-    save_dir = args.name + '/'
-    model_dir = './models/' + save_dir
-
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-        os.makedirs(model_dir)
-
-    wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
-    # Save arguments
-    with open(os.path.join(args.logdir, argument_path), "w") as f:
-        json.dump(str(args), f)
-
-    device = torch.device(args.device)
-
-    # Set logger
-    logger = set_logger(args)
-    logger.info(device)
-
-    # Set seed
-    set_seed(args.init_seed)
-
-    # Data partitioning with respect to the number of parties
-    logger.info("Partitioning data")
-    (X_train, y_train, X_test, y_test, net_dataidx_map, traindata_cls_counts) = partition_data(
-        args.dataset, args.datadir, args.logdir, args.partition, args.n_parties, beta=args.beta
-    )
-
-    n_party_per_round = int(args.n_parties * args.sample_fraction)
-    party_list = [i for i in range(args.n_parties)]
-    party_list_rounds = []
-
-    if n_party_per_round != args.n_parties:
-        for i in range(args.comm_round):
-            party_list_rounds.append(random.sample(party_list, n_party_per_round))
-    else:
-        for i in range(args.comm_round):
-            party_list_rounds.append(party_list)
-            # party_list_rounds.append(party_list[:1])
-
-    n_classes = len(np.unique(y_train))
-
-    # Get global dataloader (only used for evaluation)
-    # (train_dl_global, val_dl_global, test_dl, train_ds_global, _, test_ds_global) = get_dataloader(
-    #     args.dataset, args.datadir, args.batch_size, args.batch_size * 2
-    # )
-
-    # print("len train_dl_global:", len(train_ds_global))
-    # train_dl = None
-    # data_size = len(test_ds_global)
-
-    # Initializing net from each local party.
-    # logger.info("Initializing nets")
-    nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
-
-    global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
-    global_model = global_models[0]
-    n_comm_rounds = args.comm_round
-
-    train_dl_local_dict = {}
-    val_dl_local_dict = {}
-    test_dl_local_dict = {}
-    net_id = 0
-    permute_record = list(range(10))
-    np.random.shuffle(permute_record)
-    # def target_transform(label):
-    #     label = permute_record[label]
-    #     return label
-    # Distribute dataset and dataloader to each local party
-    # We use two dataloaders for training FedX (train_dataloader, random_dataloader), 
-    # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
-    for net in nets:
-        dataidxs = net_dataidx_map[net_id]
-        # if net_id ==0:
-        train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-            args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
+    method_list = [(1,0,0,0,0),(0,1,0,0,0),(0,0,0,0,0),(0,0,1,0,0),(0,0,1,0,1),(0,0,1,1,0),(0,0,1,1,1)]
+    for one in method_list[:3]:
+        args.aggregation, args.distillation, args.basis, args.svd, args.avg = one
+        # Create directory to save log and model
+        mkdirs(args.logdir)
+        mkdirs(args.modeldir)
+        argument_path = f"{args.dataset}-{args.batch_size}-{args.n_parties}-{args.temperature}-{args.tt}-{args.ts}-{args.epochs}_arguments-%s.json" % datetime.datetime.now().strftime(
+            "%Y-%m-%d-%H%M-%S"
         )
-        # else:
-        #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
-        #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
-        #     )
-        _, test_dl_local, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size //2, args.batch_size*2, net_dataidx_map['private_test'][net_id])
-        train_dl_local_dict[net_id] = train_dl_local
-        val_dl_local_dict[net_id] = val_dl_local
-        test_dl_local_dict[net_id] = test_dl_local
-        net_id += 1
-
-    public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size//2, args.batch_size * 2, net_dataidx_map['public'])
-    # Main training communication loop.
-    # state_dict = torch.load('./models/ckpt_1_self_teaching/local_model_0.pth')
-    # nets[1].load_state_dict(state_dict)
-    for round in range(n_comm_rounds):
-        logger.info("in comm round:" + str(round))
-        party_list_this_round = party_list_rounds[round]
-        # Download global model from (virtual) central server
-
-        nets_this_round = {k: nets[k] for k in party_list_this_round}
-
         if args.aggregation:
-            global_w = global_model.state_dict()
-            for net in nets_this_round.values():
-                net.load_state_dict(global_w)
+            method = 'weights_aggregation'
+        elif args.distillation:
+            method = 'distillation_aggregation'
+        elif args.basis:
+            method = 'ours'
+            if args.svd:
+                method += '_svd'
+            else:
+                method += '_qr'
+            if args.avg:
+                method += '_avg'
+            else:
+                method += '_semantics'
+        else:
+            method = 'individual'
 
-        # Train local model with local data
-        nets = local_train_net(
-            nets_this_round,
-            args,
-            net_dataidx_map,
-            train_dl_local_dict,
-            val_dl_local_dict,
-            train_dl=None,
-            test_dl=test_dl_local_dict,
-            global_model=global_model,
-            device=device,
-            round=round
+        args.name = '{}_clients_{}_alpha_{}'.format(args.n_parties, args.beta, method)
+
+        save_dir = args.name + '/'
+        model_dir = './models/' + save_dir
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            os.makedirs(model_dir)
+
+        wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
+        # Save arguments
+        with open(os.path.join(args.logdir, argument_path), "w") as f:
+            json.dump(str(args), f)
+
+        device = torch.device(args.device)
+
+        # Set logger
+        logger = set_logger(args)
+        logger.info(device)
+
+        # Set seed
+        set_seed(args.init_seed)
+
+        # Data partitioning with respect to the number of parties
+        logger.info("Partitioning data")
+        (X_train, y_train, X_test, y_test, net_dataidx_map, traindata_cls_counts) = partition_data(
+            args.dataset, args.datadir, args.logdir, args.partition, args.n_parties, beta=args.beta
         )
 
+        n_party_per_round = int(args.n_parties * args.sample_fraction)
+        party_list = [i for i in range(args.n_parties)]
+        party_list_rounds = []
 
-        if args.distillation:
-            feature_distillation(
+        if n_party_per_round != args.n_parties:
+            for i in range(args.comm_round):
+                party_list_rounds.append(random.sample(party_list, n_party_per_round))
+        else:
+            for i in range(args.comm_round):
+                party_list_rounds.append(party_list)
+                # party_list_rounds.append(party_list[:1])
+
+        n_classes = len(np.unique(y_train))
+
+        # Get global dataloader (only used for evaluation)
+        (train_dl_global, val_dl_global, test_dl, train_ds_global, _, test_ds_global) = get_dataloader(
+            args.dataset, args.datadir, args.batch_size, args.batch_size * 2
+        )
+
+        # print("len train_dl_global:", len(train_ds_global))
+        # train_dl = None
+        # data_size = len(test_ds_global)
+
+        # Initializing net from each local party.
+        # logger.info("Initializing nets")
+        nets, local_model_meta_data, layer_type = init_nets(args.net_config, args.n_parties, args, device="cpu")
+
+        global_models, global_model_meta_data, global_layer_type = init_nets(args.net_config, 1, args, device="cpu")
+        global_model = global_models[0]
+        n_comm_rounds = args.comm_round
+
+        train_dl_local_dict = {}
+        val_dl_local_dict = {}
+        test_dl_local_dict = {}
+        net_id = 0
+        permute_record = list(range(10))
+        np.random.shuffle(permute_record)
+        # def target_transform(label):
+        #     label = permute_record[label]
+        #     return label
+        # Distribute dataset and dataloader to each local party
+        # We use two dataloaders for training FedX (train_dataloader, random_dataloader),
+        # and their batch sizes (args.batch_size // 2) are summed up to args.batch_size
+        for net in nets:
+            dataidxs = net_dataidx_map[net_id]
+            # if net_id ==0:
+            train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+                args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs
+            )
+            # else:
+            #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
+            #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
+            #     )
+            _, test_dl_local, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size //2, args.batch_size*2, net_dataidx_map['private_test'][net_id])
+            train_dl_local_dict[net_id] = train_dl_local
+            val_dl_local_dict[net_id] = val_dl_local
+            test_dl_local_dict[net_id] = test_dl_local
+            net_id += 1
+
+        public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size//2, args.batch_size * 2, net_dataidx_map['public'])
+        # Main training communication loop.
+        # state_dict = torch.load('./models/ckpt_1_self_teaching/local_model_0.pth')
+        # nets[1].load_state_dict(state_dict)
+        for round in range(n_comm_rounds):
+            logger.info("in comm round:" + str(round))
+            party_list_this_round = party_list_rounds[round]
+            # Download global model from (virtual) central server
+
+            nets_this_round = {k: nets[k] for k in party_list_this_round}
+
+            if args.aggregation:
+                global_w = global_model.state_dict()
+                for net in nets_this_round.values():
+                    net.load_state_dict(global_w)
+
+            # Train local model with local data
+            import time
+            start_time = time.time()
+            nets = local_train_net(
                 nets_this_round,
                 args,
-                public_data_loader,
-                device = device,
-                round = round
+                net_dataidx_map,
+                train_dl_local_dict,
+                val_dl_local_dict,
+                train_dl=None,
+                test_dl=test_dl_local_dict,
+                global_model=global_model,
+                device=device,
+                round=round
             )
 
+            if args.distillation:
+                feature_distillation(
+                    nets_this_round,
+                    args,
+                    public_data_loader,
+                    device = device,
+                    round = round
+                )
 
-        total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
-        fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
 
-        log_info = {}
-        if args.aggregation:
-            for net_id, net in enumerate(nets_this_round.values()):
-                net_para = net.state_dict()
-                if net_id == 0:
-                    for key in net_para:
-                        global_w[key] = net_para[key] * fed_avg_freqs[net_id]
-                else:
-                    for key in net_para:
-                        global_w[key] += net_para[key] * fed_avg_freqs[net_id]
+            total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
+            fed_avg_freqs = [len(net_dataidx_map[r]) / total_data_points for r in range(args.n_parties)]
 
-            global_model.load_state_dict(copy.deepcopy(global_w))
+            log_info = {}
+            if args.aggregation:
+                for net_id, net in enumerate(nets_this_round.values()):
+                    net_para = net.state_dict()
+                    if net_id == 0:
+                        for key in net_para:
+                            global_w[key] = net_para[key] * fed_avg_freqs[net_id]
+                    else:
+                        for key in net_para:
+                            global_w[key] += net_para[key] * fed_avg_freqs[net_id]
 
-        if round % 5 == 0 or round > 90:
-            for net_id, net in enumerate(nets_this_round.values()):
-                test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
-                logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
-                logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
-                log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
-                log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
+                global_model.load_state_dict(copy.deepcopy(global_w))
 
+            if round % 5 == 0 or round > n_comm_rounds-5:
+                for net_id, net in enumerate(nets_this_round.values()):
+                    test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
+                    logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
+                    logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
+                    log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
+                    log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
+
+            feature_distance = test_feature_distance(nets[0], nets[1], test_dl)
+            log_info['feature_dis'] = feature_distance
             log_info['round'] = round
             wandb.log(log_info)
 
-        # for net_id, net in nets_this_round.items():
-        #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
+            # for net_id, net in nets_this_round.items():
+            #     save_feature_bank(net, val_dl_global, test_dl, save_dir+ str(net_id)+'_'+str(round)+'_')
 
-    # record_data.to_csv('data.csv')
-    # np.save('matrix.npy', matrix_data)
+        # record_data.to_csv('data.csv')
+        # np.save('matrix.npy', matrix_data)
 
-    # Save the final round's local and global models
-    if args.aggregation:
-        torch.save(global_model.state_dict(), args.modeldir + save_dir + "global_model.pth")
+        # Save the final round's local and global models
+        if args.aggregation:
+            torch.save(global_model.state_dict(), args.modeldir + save_dir + "global_model.pth")
 
-    else:
-        for net_id,  net in nets_this_round.items():
-            torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
+        else:
+            for net_id,  net in nets_this_round.items():
+                torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
+        wandb.finish()
 
 
