@@ -41,7 +41,7 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="cifar100", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
-    parser.add_argument("--batch-size", type=int, default=1000, help="total sum of input batch size for training (default: 128)")
+    parser.add_argument("--batch-size", type=int, default=500, help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
@@ -365,7 +365,7 @@ def p2p_train_nets(
             proj_original, proj_pos, proj_random = proj.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             feature_original, _, _ = feature.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # feature_dict[net_id] = feature_original
-            projection_dict[net_id] = proj_original
+            projection_dict[net_id] = proj
             nt_local = nt_xent(proj_original, proj_pos, args.temperature)
             loss_nt = nt_local
             js_local = js_loss(proj_original, proj_pos, proj_random, args.temperature, args.ts)
