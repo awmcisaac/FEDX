@@ -365,7 +365,7 @@ def p2p_train_nets(
             proj_original, proj_pos, proj_random = proj.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             feature_original, _, _ = feature.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # feature_dict[net_id] = feature_original
-            projection_dict[net_id] = proj
+            projection_dict[net_id] = proj.detach()
             nt_local = nt_xent(proj_original, proj_pos, args.temperature)
             loss_nt = nt_local
             js_local = js_loss(proj_original, proj_pos, proj_random, args.temperature, args.ts)
@@ -373,12 +373,12 @@ def p2p_train_nets(
             loss_dict[net_id] = loss_nt + loss_js
             if args.basis:
                 if args.svd:
-                    u, s, v = torch.svd(proj_original.detach())
+                    u, s, v = torch.svd(proj.detach())
                     sigma = torch.diag_embed(s)
                     b = torch.matmul(sigma, v.t())
                     w = u
                 else:
-                    w, b = torch.linalg.qr(proj_original.detach())
+                    w, b = torch.linalg.qr(proj.detach())
                 w_dict[net_id] = w
                 b_dict[net_id] = b
 
