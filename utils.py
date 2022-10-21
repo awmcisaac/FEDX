@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 from torch.autograd import Variable
 from torch.utils.data import DataLoader, TensorDataset
 
-from datasets import CIFAR10_truncated, SVHN_truncated, MNIST_truncated
+from datasets import CIFAR10_truncated, SVHN_truncated, MNIST_truncated, CIFAR100_truncated
 
 logging.basicConfig()
 logger = logging.getLogger()
@@ -66,6 +66,20 @@ def load_cifar10_data(datadir):
     X_test, y_test = cifar10_test_ds.data, cifar10_test_ds.target
 
     return (X_train, y_train, X_test, y_test)
+
+
+def load_cifar100_data(datadir):
+    transform = transforms.Compose([transforms.ToTensor()])
+
+    cifar10_train_ds = CIFAR100_truncated(datadir, train=True, download=True, transform=transform)
+    cifar10_test_ds = CIFAR100_truncated(datadir, train=False, download=True, transform=transform)
+
+    X_train, y_train = cifar10_train_ds.data, cifar10_train_ds.target
+    X_test, y_test = cifar10_test_ds.data, cifar10_test_ds.target
+
+    return (X_train, y_train, X_test, y_test)
+
+
 
 
 def load_mnist_data(datadir):
@@ -122,6 +136,8 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4):
         X_train, y_train, X_test, y_test = load_svhn_data(datadir)
     elif dataset == 'mnist':
         X_train, y_train, X_test, y_test = load_mnist_data(datadir)
+    if dataset == "cifar100":
+        X_train, y_train, X_test, y_test = load_cifar100_data(datadir)
 
     n_train = y_train.shape[0]
 
@@ -134,8 +150,10 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4):
     elif partition == "noniid":
         min_size = 0
         min_require_size = 10
-        K = 10
-
+        if dataset == 'cifar100':
+            K = 100
+        else:
+            K = 10
         N = y_train.shape[0]
         net_dataidx_map = {}
 
@@ -251,18 +269,20 @@ def test_featrue_bank(name, feature_size, label_size):
     return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
 
 
-def test_feature_distance(net1, net2, test_data_loader):
-    net1.cuda()
-    net2.cuda()
-    distance_list = []
+def test_feature_distance(nets, test_data_loader):
     loss = torch.nn.MSELoss()
     with torch.no_grad():
         for data, _, target, _ in test_data_loader:
-            feature1, proj1, pred1 = net1(data.cuda(non_blocking = True))
-            feature2, proj2, pred2 = net2(data.cuda(non_blocking=True))
-            distance_list.append(loss(feature1, feature2).item())
+            feature_list = []
+            for net_id, net in nets.items():
+                feature, proj, pred = net(data.cuda(non_blocking = True))
+                feature_list.append(feature.detach())
+            avg_feature = sum(feature_list)/len(feature_list)
+            loss_list = []
+            for one in feature_list:
+                loss_list.append(loss(one, avg_feature))
 
-    return sum(distance_list)/len(distance_list)
+    return sum(loss_list)/len(loss_list)
 
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
@@ -327,6 +347,57 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
 def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_level=0, target_transform = None):
     if dataset == "cifar10":
         dl_obj = CIFAR10_truncated
+        normalize = transforms.Normalize(
+            mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
+            std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
+        )
+        transform_train = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Lambda(
+                    lambda x: F.pad(
+                        Variable(x.unsqueeze(0), requires_grad=False),
+                        (4, 4, 4, 4),
+                        mode="reflect",
+                    ).data.squeeze()
+                ),
+                transforms.ToPILImage(),
+                transforms.ColorJitter(brightness=noise_level),
+                transforms.RandomCrop(32),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+
+        # data prep for test set
+        transform_test = transforms.Compose([transforms.ToTensor(), normalize])
+
+        train_ds = dl_obj(
+            datadir,
+            dataidxs=dataidxs,
+            train=True,
+            transform=transform_train,
+            download=True,
+            target_transform=target_transform
+        )
+
+        val_ds = dl_obj(
+            datadir,
+            dataidxs=dataidxs,
+            train=True,
+            transform=transform_test,
+            download=False,
+            target_transform=target_transform
+        )
+
+        test_ds = dl_obj(datadir, train=False, transform=transform_test, download=True)
+        train_dl = data.DataLoader(dataset=train_ds, batch_size=train_bs, drop_last=True, shuffle=True)
+        test_dl = data.DataLoader(dataset=test_ds, batch_size=test_bs, shuffle=False)
+        val_dl = data.DataLoader(dataset=val_ds, batch_size=test_bs, shuffle=False)
+
+    elif dataset == "cifar100":
+        dl_obj = CIFAR100_truncated
         normalize = transforms.Normalize(
             mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
             std=[x / 255.0 for x in [63.0, 62.1, 66.7]],

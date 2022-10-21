@@ -37,22 +37,22 @@ def get_gpu_memory():
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="lenet", help="neural network used in training")
-    parser.add_argument("--dataset", type=str, default="cifar10", help="dataset used for training")
+    parser.add_argument("--model", type=str, default="resnet18", help="neural network used in training")
+    parser.add_argument("--dataset", type=str, default="cifar100", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
     parser.add_argument("--batch-size", type=int, default=1000, help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default = 51, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default = 101, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=10000, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -160,7 +160,7 @@ def train_net_fedx(
             feature_all.append(proj1_original.detach())
             loss_ours = 0
             # previous online-version
-            if args.basis and round>5:
+            if args.basis and round > 2:
                 if len(proj1_original) < len(op_feature):
                     feature_tep = op_feature[:len(proj1_original)]
                     op_feature = op_feature[-(len(op_feature)-len(proj1_original)):]
@@ -200,7 +200,7 @@ def train_net_fedx(
             js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
             # loss_js = js_global + js_local
             loss_js = js_local
-            loss = loss_nt + loss_js + 0.1*loss_ours
+            loss = loss_nt + loss_js + loss_ours
             loss.backward()
             torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
@@ -647,14 +647,17 @@ if __name__ == "__main__":
                 global_model.load_state_dict(copy.deepcopy(global_w))
 
             if round % 5 == 0 or round > n_comm_rounds-5:
+                acc_list = []
                 for net_id, net in enumerate(nets_this_round.values()):
                     test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
                     logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
                     logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
                     log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
                     log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
+                    acc_list.append(test_acc_1)
+                log_info['avg_acc'] = sum(acc_list)/len(acc_list)
 
-            feature_distance = test_feature_distance(nets[0], nets[1], test_dl)
+            feature_distance = test_feature_distance(nets, test_dl)
             log_info['feature_dis'] = feature_distance
             log_info['round'] = round
             wandb.log(log_info)
