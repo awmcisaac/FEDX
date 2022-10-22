@@ -1,4 +1,4 @@
-""" 
+"""
 Main code for training and evaluating FedX.
 
 """
@@ -18,7 +18,7 @@ import pandas as pd
 import copy
 from losses import js_loss, nt_xent
 from model import init_nets
-from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_feature_distance
+from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_feature_distance, asemble_test
 import ssl
 import re
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -44,7 +44,7 @@ def get_args():
     parser.add_argument("--batch-size", type=int, default=500, help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
-    parser.add_argument("--n_parties", type=int, default=2, help="number of workers in a distributed cluster")
+    parser.add_argument("--n_parties", type=int, default=5, help="number of workers in a distributed cluster")
     parser.add_argument("--comm_round", type=int, default = 101, help="number of maximum communication roun")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
@@ -648,14 +648,23 @@ if __name__ == "__main__":
 
             if round % 5 == 0 or round > n_comm_rounds-5:
                 acc_list = []
-                for net_id, net in enumerate(nets_this_round.values()):
-                    test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id], test_dl_local_dict[net_id])
-                    logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
-                    logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
-                    log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
-                    log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
-                    acc_list.append(test_acc_1)
-                log_info['avg_acc'] = sum(acc_list)/len(acc_list)
+
+                if args.aggregation:
+                    test_acc_1, test_acc_5 = test_linear_fedX(global_model, val_dl_global, test_dl)
+                else:
+                    for net_id, net in enumerate(nets_this_round.values()):
+                        test_acc_1, test_acc_5 = test_linear_fedX(net, val_dl_local_dict[net_id],
+                                                                  test_dl_local_dict[net_id])
+                        logger.info(">> Private Model {} Test accuracy Top1: {}".format(net_id, test_acc_1))
+                        logger.info(">> Private Model {} Test accuracy Top5: {}".format(net_id, test_acc_5))
+                        log_info['acc_top1_client{}'.format(net_id)] = test_acc_1
+                        log_info['acc_top5_client{}'.format(net_id)] = test_acc_5
+                        acc_list.append(test_acc_1)
+                    log_info['avg_acc'] = sum(acc_list) / len(acc_list)
+                    test_acc_1, test_acc_5 = asemble_test(nets, val_dl_global, test_dl)
+
+                log_info['assemble_acc1'] = test_acc_1
+                log_info['assemble_acc5'] = test_acc_5
 
             feature_distance = test_feature_distance(nets, test_dl)
             log_info['feature_dis'] = feature_distance

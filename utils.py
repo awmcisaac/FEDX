@@ -284,6 +284,78 @@ def test_feature_distance(nets, test_data_loader):
 
     return sum(loss_list)/len(loss_list)
 
+def asemble_test(nets, memory_data_loader, test_data_loader):
+
+    for net in nets.values():
+        net.cuda()
+        net.eval()
+    feature_bank = []
+    label_bank = []
+
+    with torch.no_grad():
+        for data, _, target, _ in memory_data_loader:
+            label_bank.append(target)
+            feature_tep = []
+            for net in nets.values():
+                feature, _, _ = net(data.cuda(non_blocking=True))
+                feature_tep.append(feature.detach())
+            feature_asemble = sum(feature_tep)/len(feature_tep)
+            feature_bank.append(feature_asemble)
+        feature_bank = torch.cat(feature_bank, dim=0).contiguous().cuda()
+        label_bank = torch.cat(label_bank, dim=0).contiguous().cuda()
+    linear_ds = TensorDataset(feature_bank, label_bank)
+    linear_loader = DataLoader(linear_ds, batch_size=64, shuffle=True)
+
+    feature_bank_test = []
+    label_bank_test = []
+    with torch.no_grad():
+        for data, _, target, _ in test_data_loader:
+            feature_tep = []
+            label_bank_test.append(target)
+            for net in nets.values():
+                feature, _, _ = net(data.cuda(non_blocking = True))
+                feature_tep.append(feature.detach())
+            feature_asemble = sum(feature_tep)/len(feature_tep)
+            feature_bank_test.append(feature_asemble)
+        feature_bank_test = torch.cat(feature_bank_test, dim=0).contiguous().cuda()
+        label_bank_test = torch.cat(label_bank_test, dim=0).contiguous().cuda()
+
+    linear_ds_test = TensorDataset(feature_bank_test, label_bank_test)
+    linear_loader_test = DataLoader(linear_ds_test, batch_size=64, shuffle=True)
+
+    loss_criterion = nn.CrossEntropyLoss()
+    linear_net = Net(feature_bank.shape[-1], label_bank.max().item() + 1)
+    linear_net = linear_net.cuda()
+    train_optimizer = optim.Adam(linear_net.parameters(), lr=1e-3, weight_decay=1e-6)
+
+    # Train linear layer (fix the backbone network)
+    for epoch in range(1, 101):
+        for data, target in linear_loader:
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True).type(torch.long)
+            out = linear_net(data)
+            loss = loss_criterion(out, target)
+
+            train_optimizer.zero_grad()
+            loss.backward()
+            train_optimizer.step()
+
+    # Evaluation
+    total_correct_1, total_correct_5, total_num = 0.0, 0.0, 0
+    with torch.no_grad():
+        for data, target in linear_loader_test:
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            out = linear_net(data)
+
+            total_num += data.size(0)
+            prediction = torch.argsort(out, dim=-1, descending=True)
+            total_correct_1 += torch.sum((prediction[:, 0:1] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+            total_correct_5 += torch.sum((prediction[:, 0:5] == target.unsqueeze(dim=-1)).any(dim=-1).float()).item()
+
+    return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
+
+
+
+
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
     net.cuda()
