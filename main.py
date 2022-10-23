@@ -37,8 +37,8 @@ def get_gpu_memory():
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="resnet18", help="neural network used in training")
-    parser.add_argument("--dataset", type=str, default="cifar100", help="dataset used for training")
+    parser.add_argument("--model", type=str, default="lenet", help="neural network used in training")
+    parser.add_argument("--dataset", type=str, default="cifar10", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
     parser.add_argument("--batch-size", type=int, default=500, help="total sum of input batch size for training (default: 128)")
@@ -52,7 +52,7 @@ def get_args():
     parser.add_argument("--logdir", type=str, required=False, default="./logs/", help="Log directory path")
     parser.add_argument("--modeldir", type=str, required=False, default="./models/", help="Model directory path")
     parser.add_argument(
-        "--beta", type=float, default=10000, help="The parameter for the dirichlet distribution for data partitioning"
+        "--beta", type=float, default=0.5, help="The parameter for the dirichlet distribution for data partitioning"
     )
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
@@ -281,8 +281,8 @@ def feature_distillation(
         x1 = x1.cuda()
         for net_id, net in enumerate(nets.values()):
             net.eval()
-            _, proj1, pred1 = net(x1)
-            ensemble_feature.append(proj1.detach())
+            feature, proj1, pred1 = net(x1)
+            ensemble_feature.append(feature.detach())
         ensemble_feature = sum(ensemble_feature)/len(ensemble_feature)
 
         for net_id, net in enumerate(nets.values()):
@@ -646,6 +646,9 @@ if __name__ == "__main__":
 
                 global_model.load_state_dict(copy.deepcopy(global_w))
 
+            feature_distance = test_feature_distance(nets, test_dl)
+            train_feature_distance = test_feature_distance(nets, public_data_loader)
+
             if round % 5 == 0 or round > n_comm_rounds-5:
                 acc_list = []
 
@@ -666,8 +669,9 @@ if __name__ == "__main__":
                 log_info['assemble_acc1'] = test_acc_1
                 log_info['assemble_acc5'] = test_acc_5
 
-            feature_distance = test_feature_distance(nets, test_dl)
-            log_info['feature_dis'] = feature_distance
+
+            log_info['public_feature_dis'] = train_feature_distance
+            log_info['test_feature_dis'] = feature_distance
             log_info['round'] = round
             wandb.log(log_info)
 
