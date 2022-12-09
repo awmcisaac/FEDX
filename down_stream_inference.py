@@ -202,7 +202,7 @@ def train_net_fedx(
             loss_js = js_local
             loss = loss_nt + loss_js + loss_ours
             loss.backward()
-            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
             epoch_loss_collector.append(loss.item())
 
@@ -302,7 +302,7 @@ def feature_distillation(
             _, proj1, pred1 = net(x1)
             loss = kl_loss(proj1, ensemble_feature)
             loss.backward()
-            torch.nn.utils.clip_grad_norm(net.parameters(), max_norm=1, norm_type=2)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
 
 def p2p_train_nets(
@@ -404,7 +404,7 @@ def p2p_train_nets(
         for net_id, optimizer in optimizer_dict.items():
             loss_dict[net_id].backward()
             loss_record[net_id].append(loss_dict[net_id].item())
-            torch.nn.utils.clip_grad_norm(nets[net_id].parameters(), max_norm=1, norm_type=2)
+            torch.nn.utils.clip_grad_norm_(nets[net_id].parameters(), max_norm=1, norm_type=2)
             optimizer.step()
             nets[net_id].eval()
 
