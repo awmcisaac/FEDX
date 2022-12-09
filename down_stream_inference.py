@@ -498,7 +498,7 @@ if __name__ == "__main__":
             os.makedirs(save_dir)
             os.makedirs(model_dir)
 
-        # wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='peilab')
+        # wandb.init(project='Basis_Aggregation_{}'.format(args.dataset), name=args.name, entity='andymcisaac')
         # Save arguments
         with open(os.path.join(args.logdir, argument_path), "w") as f:
             json.dump(str(args), f)
