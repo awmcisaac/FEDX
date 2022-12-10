@@ -16,7 +16,7 @@ import torch.optim as optim
 import wandb
 import pandas as pd
 import copy
-from losses import js_loss, nt_xent
+from losses import js_loss, nt_xent, bt_loss, ss_loss
 from model import init_nets
 from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_feature_distance, asemble_test
 import ssl
@@ -57,10 +57,13 @@ def get_args():
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
     parser.add_argument("--out_dim", type=int, default=256, help="the output dimension for the projection layer")
-    parser.add_argument("--temperature", type=float, default=0.1, help="the temperature parameter for contrastive loss")
+    parser.add_argument("--loss", type=str, default="simclr", choices=["simclr", "barlow", "simsiam"]
+    parser.add_argument("--temperature", type=float, default=0.1, help="the temperature parameter for SimCLR contrastive loss")
+    parser.add_argument("--lambda", type=float, default=5e-3, help="the lambda parameter for Barlow Twins loss")
     parser.add_argument("--tt", type=float, default=0.1, help="the temperature parameter for js loss in teacher model")
     parser.add_argument("--ts", type=float, default=0.1, help="the temperature parameter for js loss in student model")
     parser.add_argument("--sample_fraction", type=float, default=1.0, help="how many clients are sampled in each round")
+
     args = parser.parse_args()
 
     # global record_data, matrix_data
@@ -190,16 +193,23 @@ def train_net_fedx(
                         f_label = torch.matmul(w, b)
 
                     loss_ours += kl_loss(proj1_original, f_label)
-            nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
-            # nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
-            # loss_nt = nt_local + nt_global
-            loss_nt = nt_local
+            if args.loss == "simclr":
+                nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
+                nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
+            elif args.loss == "barlow":
+                nt_local = bt_loss(proj1_original, proj1_pos, args.lambda)
+                nt_global = bt_loss(pred1_original, proj2_pos, args.lambda)
+            elif args.loss == "simsiam":
+                nt_local = ss_loss(proj1_original, proj1_pos)
+                nt_global = ss_loss(pred1_original, proj2_pos)
+            loss_nt = nt_local + nt_global
+            # loss_nt = nt_local
 
             # Relational losses (local, global)
-            # js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
+            js_global = js_loss(pred1_original, pred1_pos, proj2_random, args.temperature, args.tt)
             js_local = js_loss(proj1_original, proj1_pos, proj1_random, args.temperature, args.ts)
-            # loss_js = js_global + js_local
-            loss_js = js_local
+            loss_js = js_global + js_local
+            # loss_js = js_local
             loss = loss_nt + loss_js + loss_ours
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1, norm_type=2)
@@ -366,7 +376,13 @@ def p2p_train_nets(
             feature_original, _, _ = feature.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # feature_dict[net_id] = feature_original
             projection_dict[net_id] = proj.detach()
-            nt_local = nt_xent(proj_original, proj_pos, args.temperature)
+#            nt_local = nt_xent(proj_original, proj_pos, args.temperature)
+            if args.loss == "simclr":
+                nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
+            elif args.loss == "barlow":
+                nt_local = bt_loss(proj1_original, proj1_pos, args.lambda)
+            elif args.loss == "simsiam":
+                nt_local = ss_loss(proj1_original, proj1_pos)
             loss_nt = nt_local
             js_local = js_loss(proj_original, proj_pos, proj_random, args.temperature, args.ts)
             loss_js = js_local

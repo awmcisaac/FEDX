@@ -8,7 +8,8 @@ import torch
 from utils import F
 
 def nt_xent(x1, x2, t=0.1):
-    """Contrastive loss objective function"""
+    """Contrastive loss objective function
+    Normalized temperature-scaled cross entropy"""
     x1 = F.normalize(x1, dim=1)
     x2 = F.normalize(x2, dim=1)
     batch_size = x1.size(0)
@@ -21,8 +22,33 @@ def nt_xent(x1, x2, t=0.1):
     loss = (-torch.log(pos_sim / sim_matrix.sum(dim=-1))).mean()
     return loss
 
+def off_diagonal(M):
+    res = M.clone()
+    res.diagonal(dim1=-2, dim2=-1).zero_()
+    return res
+
+def bt_loss(x1, x2, l=1):
+    """Barlow Twins loss objective function"""
+    batch_size = x1.size(0)
+    emb_dim = x1.size(1)
+
+    bn = torch.nn.BatchNorm1d(emb_dim, affine=False)
+    x1 = bn(x1)
+    x2 = bn(x2)
+
+    c = torch.mm(x1.T, x2) / batch_size
+    c_diff = torch.pow((c - torch.eye(emb_dim)), 2)
+    c_diff[~torch.eye(emb_dim).bool()] *= l
+    loss = c_diff.sum()
+    return loss
+
+def ss_loss(x1, x2):
+    """SimSiam loss objective function"""
+    return NotImplementedError
+
 def js_loss(x1, x2, xa, t=0.1, t2=0.01):
-    """Relational loss objective function"""
+    """Relational loss objective function
+    Jensen-Shannon divergence"""
     pred_sim1 = torch.mm(F.normalize(x1, dim=1), F.normalize(xa, dim=1).t())
     inputs1 = F.log_softmax(pred_sim1 / t, dim=1)
     pred_sim2 = torch.mm(F.normalize(x2, dim=1), F.normalize(xa, dim=1).t())
