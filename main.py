@@ -57,9 +57,9 @@ def get_args():
     parser.add_argument("--device", type=str, default="cuda:0", help="The device to run the program")
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
     parser.add_argument("--out_dim", type=int, default=256, help="the output dimension for the projection layer")
-    parser.add_argument("--loss", type=str, default="simclr", choices=["simclr", "barlow", "simsiam"]
+    parser.add_argument("--loss", type=str, default="simclr", choices=["simclr", "barlow", "simsiam"])
     parser.add_argument("--temperature", type=float, default=0.1, help="the temperature parameter for SimCLR contrastive loss")
-    parser.add_argument("--lambda", type=float, default=5e-3, help="the lambda parameter for Barlow Twins loss")
+    parser.add_argument("--lam", type=float, default=5e-3, help="the lambda parameter for Barlow Twins loss")
     parser.add_argument("--tt", type=float, default=0.1, help="the temperature parameter for js loss in teacher model")
     parser.add_argument("--ts", type=float, default=0.1, help="the temperature parameter for js loss in student model")
     parser.add_argument("--sample_fraction", type=float, default=1.0, help="how many clients are sampled in each round")
@@ -197,8 +197,8 @@ def train_net_fedx(
                 nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
                 nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
             elif args.loss == "barlow":
-                nt_local = bt_loss(proj1_original, proj1_pos, args.lambda)
-                nt_global = bt_loss(pred1_original, proj2_pos, args.lambda)
+                nt_local = bt_loss(proj1_original, proj1_pos, args.lam)
+                nt_global = bt_loss(pred1_original, proj2_pos, args.lam)
             elif args.loss == "simsiam":
                 nt_local = ss_loss(proj1_original, proj1_pos)
                 nt_global = ss_loss(pred1_original, proj2_pos)
@@ -380,7 +380,7 @@ def p2p_train_nets(
             if args.loss == "simclr":
                 nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
             elif args.loss == "barlow":
-                nt_local = bt_loss(proj1_original, proj1_pos, args.lambda)
+                nt_local = bt_loss(proj1_original, proj1_pos, args.lam)
             elif args.loss == "simsiam":
                 nt_local = ss_loss(proj1_original, proj1_pos)
             loss_nt = nt_local
