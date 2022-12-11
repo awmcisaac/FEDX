@@ -147,10 +147,10 @@ def train_net_fedx(
             optimizer.zero_grad()
             target = target.long()
             try:
-                random_x, _, _, _ = random_dataloader.next()
+                random_x, _, _, _ = next(random_dataloader)
             except:
                 random_dataloader = iter(random_loader)
-                random_x, _, _, _ = random_dataloader.next()
+                random_x, _, _, _ = next(random_dataloader)
             random_x = random_x.cuda()
             all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
             _, proj1, pred1 = net(all_x)
@@ -363,12 +363,12 @@ def p2p_train_nets(
             net.train()
             random_loader = copy.deepcopy(train_dl_local_dict[net_id])
 
-            x1, x2, target, _ = iter(train_dl_local_dict[net_id]).next()
+            x1, x2, target, _ = next(iter(train_dl_local_dict[net_id]))
             x1, x2, target = x1.cuda(), x2.cuda(), target.cuda()
             optimizer_dict[net_id].zero_grad()
             target = target.long
             random_dataloader = iter(random_loader)
-            random_x, _, _, _ = random_dataloader.next()
+            random_x, _, _, _ = next(random_dataloader)
             random_x = random_x.cuda()
             all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
             feature, proj, pred = net(all_x)
