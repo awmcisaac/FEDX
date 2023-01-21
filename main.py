@@ -4,7 +4,6 @@ Main code for training and evaluating FedX.
 """
 
 import argparse
-import copy
 import datetime
 import json
 import os
@@ -14,17 +13,20 @@ import numpy as np
 import torch
 import torch.optim as optim
 import wandb
-import pandas as pd
 import copy
 from losses import js_loss, nt_xent, bt_loss, ss_loss
 from model import init_nets
-from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, save_feature_bank, test_feature_distance, asemble_test
+from utils import get_dataloader, mkdirs, partition_data, test_linear_fedX, set_logger, test_feature_distance, \
+    asemble_test
 import ssl
 import re
+
 ssl._create_default_https_context = ssl._create_unverified_context
+
 
 # record_data = None
 # matrix_data = None
+
 
 def get_gpu_memory():
     free_gpu_info = os.popen('nvidia-smi -q -d Memory | grep -A4 GPU | grep Free').read()
@@ -35,17 +37,19 @@ def get_gpu_memory():
     gpu_id = sorted(gpu_dict.items(), key=lambda item: item[1])[-1][0]
     os.environ.setdefault('CUDA_VISIBLE_DEVICES', str(gpu_id))
 
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="lenet", help="neural network used in training")
     parser.add_argument("--dataset", type=str, default="cifar10", help="dataset used for training")
     parser.add_argument("--net_config", type=lambda x: list(map(int, x.split(", "))))
     parser.add_argument("--partition", type=str, default="noniid", help="the data partitioning strategy")
-    parser.add_argument("--batch-size", type=int, default=500, help="total sum of input batch size for training (default: 128)")
+    parser.add_argument("--batch-size", type=int, default=500,
+                        help="total sum of input batch size for training (default: 128)")
     parser.add_argument("--lr", type=float, default=0.01, help="learning rate (default: 0.1)")
     parser.add_argument("--epochs", type=int, default=1, help="number of local epochs")
     parser.add_argument("--n_parties", type=int, default=5, help="number of workers in a distributed cluster")
-    parser.add_argument("--comm_round", type=int, default = 101, help="number of maximum communication roun")
+    parser.add_argument("--comm_round", type=int, default=101, help="number of maximum communication rounds")
     parser.add_argument("--init_seed", type=int, default=0, help="Random seed")
     parser.add_argument("--datadir", type=str, required=False, default="./data/", help="Data directory")
     parser.add_argument("--reg", type=float, default=1e-5, help="L2 regularization strength")
@@ -58,7 +62,8 @@ def get_args():
     parser.add_argument("--optimizer", type=str, default="sgd", help="the optimizer")
     parser.add_argument("--out_dim", type=int, default=256, help="the output dimension for the projection layer")
     parser.add_argument("--loss", type=str, default="simclr", choices=["simclr", "barlow", "simsiam"])
-    parser.add_argument("--temperature", type=float, default=0.1, help="the temperature parameter for SimCLR contrastive loss")
+    parser.add_argument("--temperature", type=float, default=0.1,
+                        help="the temperature parameter for SimCLR contrastive loss")
     parser.add_argument("--lam", type=float, default=5e-3, help="the lambda parameter for Barlow Twins loss")
     parser.add_argument("--tt", type=float, default=0.1, help="the temperature parameter for js loss in teacher model")
     parser.add_argument("--ts", type=float, default=0.1, help="the temperature parameter for js loss in student model")
@@ -79,6 +84,7 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
     random.seed(seed)
 
+
 def recreate_feature(data, b):
     A = torch.matmul(b, data.t())
     u, s, v = torch.svd(A)
@@ -88,22 +94,23 @@ def recreate_feature(data, b):
     # f = torch.matmul(u, b)
     return u
 
+
 def train_net_fedx(
-    net_id,
-    net,
-    global_net,
-    train_dataloader,
-    val_dataloader,
-    test_dataloader,
-    epochs,
-    lr,
-    args_optimizer,
-    temperature,
-    args,
-    round,
-    device="cpu",
-    op_net = None,
-    b_dict = None,
+        net_id,
+        net,
+        global_net,
+        train_dataloader,
+        val_dataloader,
+        test_dataloader,
+        epochs,
+        lr,
+        args_optimizer,
+        temperature,
+        args,
+        round,
+        device="cpu",
+        op_net=None,
+        b_dict=None,
 ):
     net.cuda()
     # global_net.cuda()
@@ -136,7 +143,7 @@ def train_net_fedx(
     # iter_num = len(train_dataloader) * epochs
 
     if args.basis and round > 0:
-        op_feature = torch.load(save_dir+ str(1-net_id)+'_'+str(round-1)+'_'+'.pth')
+        op_feature = torch.load(save_dir + str(1 - net_id) + '_' + str(round - 1) + '_' + '.pth')
 
     for epoch in range(epochs):
         feature_all = []
@@ -154,19 +161,19 @@ def train_net_fedx(
             random_x = random_x.cuda()
             all_x = torch.cat((x1, x2, random_x), dim=0).cuda()
             _, proj1, pred1 = net(all_x)
-            # with torch.no_grad():
-            #     _, proj2, pred2 = global_net(all_x)
+            with torch.no_grad():
+                _, proj2, pred2 = global_net(all_x)
 
-            # pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            pred1_original, pred1_pos, pred1_random = pred1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             proj1_original, proj1_pos, proj1_random = proj1.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
-            # proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
+            proj2_original, proj2_pos, proj2_random = proj2.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             feature_all.append(proj1_original.detach())
             loss_ours = 0
             # previous online-version
             if args.basis and round > 2:
                 if len(proj1_original) < len(op_feature):
                     feature_tep = op_feature[:len(proj1_original)]
-                    op_feature = op_feature[-(len(op_feature)-len(proj1_original)):]
+                    op_feature = op_feature[-(len(op_feature) - len(proj1_original)):]
                     if args.svd:
                         u, s, v = torch.svd(feature_tep)
                         sigma = torch.diag_embed(s)
@@ -194,14 +201,14 @@ def train_net_fedx(
 
                     loss_ours += kl_loss(proj1_original, f_label)
             if args.loss == "simclr":
-                nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
-                nt_global = nt_xent(pred1_original, proj2_pos, args.temperature)
+                nt_local = nt_xent(proj1_original, proj1_pos, args.temperature, device)
+                nt_global = nt_xent(pred1_original, proj2_pos, args.temperature, device)
             elif args.loss == "barlow":
-                nt_local = bt_loss(proj1_original, proj1_pos, args.lam)
-                nt_global = bt_loss(pred1_original, proj2_pos, args.lam)
+                nt_local = bt_loss(proj1_original, proj1_pos, args.lam, device)
+                nt_global = bt_loss(pred1_original, proj2_pos, args.lam, device)
             elif args.loss == "simsiam":
-                nt_local = ss_loss(proj1_original, proj1_pos)
-                nt_global = ss_loss(pred1_original, proj2_pos)
+                nt_local = ss_loss(proj1_original, proj1_pos, device)
+                nt_global = ss_loss(pred1_original, proj2_pos, device)
             loss_nt = nt_local + nt_global
             # loss_nt = nt_local
 
@@ -225,45 +232,43 @@ def train_net_fedx(
         # projection_tep = torch.matmul(q_tep, r).detach()
         #     loss_ours += kl_loss(proj1_original, projection_tep)
 
-                # u_op, s_op, v_op = torch.svd(op_proj1)
-                # sigma_op = torch.diag_embed(s_op)
-                # b_op = torch.matmul(sigma_op, v_op.t())
-                #
-                # u, s, v = torch.svd(proj1_original.detach())
-                #
-                # if s.norm() < s_op.norm():
-                #     u_tep = recreate_feature(proj1_original, b_op)
-                #     projection_tep = torch.matmul(u_tep, b_op).detach()
-                #     loss_ours += kl_loss(proj1_original, projection_tep)
-                # loss_ours += kl_loss(proj1_original, op_proj1)
+        # u_op, s_op, v_op = torch.svd(op_proj1)
+        # sigma_op = torch.diag_embed(s_op)
+        # b_op = torch.matmul(sigma_op, v_op.t())
+        #
+        # u, s, v = torch.svd(proj1_original.detach())
+        #
+        # if s.norm() < s_op.norm():
+        #     u_tep = recreate_feature(proj1_original, b_op)
+        #     projection_tep = torch.matmul(u_tep, b_op).detach()
+        #     loss_ours += kl_loss(proj1_original, projection_tep)
+        # loss_ours += kl_loss(proj1_original, op_proj1)
 
-            # Contrastive losses (local, global)
+        # Contrastive losses (local, global)
 
-            # f_tep = proj1_original.detach()
-            # u, s, v = torch.svd(f_tep)
-            # global record_data, matrix_data
-            # record_data.loc[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
-            # matrix_data[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = v.cpu().numpy()
+        # f_tep = proj1_original.detach()
+        # u, s, v = torch.svd(f_tep)
+        # global record_data, matrix_data
+        # record_data.loc[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = s.cpu().tolist()
+        # matrix_data[str(net_id)+'_'+str(round)+'_'+str(epoch)+'_'+str(batch_idx)] = v.cpu().numpy()
 
+        # if hasattr(net, 'v'):
+        #     v_global = net.v
+        #     u, s, v = torch.svd(proj1_original.detach())
+        #     A = torch.diag_embed(s)
+        #     proj1_global = torch.matmul(u, torch.matmul(A, v_global.transpose(-2, -1)))
+        #     loss_ours = kl_loss(proj1_original, proj1_global)
+        # else:
+        #     loss_ours = 0
 
-            # if hasattr(net, 'v'):
-            #     v_global = net.v
-            #     u, s, v = torch.svd(proj1_original.detach())
-            #     A = torch.diag_embed(s)
-            #     proj1_global = torch.matmul(u, torch.matmul(A, v_global.transpose(-2, -1)))
-            #     loss_ours = kl_loss(proj1_original, proj1_global)
-            # else:
-            #     loss_ours = 0
-
-            # loss_supervised = ce_loss(pred1_original, target)
-            # loss = loss_supervised
-            # _, op_proj1, op_pred1 = op_net(x1)
-            # op_loss = kl_loss(proj1_original, op_proj1)
-
+        # loss_supervised = ce_loss(pred1_original, target)
+        # loss = loss_supervised
+        # _, op_proj1, op_pred1 = op_net(x1)
+        # op_loss = kl_loss(proj1_original, op_proj1)
 
     feature_all = torch.cat(feature_all, dim=0)
     feature_all = feature_all.detach()
-    torch.save(feature_all, save_dir+ str(net_id)+'_'+str(round)+'_'+'.pth')
+    torch.save(feature_all, save_dir + str(net_id) + '_' + str(round) + '_' + '.pth')
     # if round > 5:
     # base_dict = np.load('base_2.npy', allow_pickle=True).item()
     # for one in base_dict:
@@ -278,14 +283,14 @@ def train_net_fedx(
     net.eval()
     logger.info(" ** Training complete **")
 
-def feature_distillation(
-    nets,
-    args,
-    public_data_loader,
-    round=None,
-    device="cpu",
-):
 
+def feature_distillation(
+        nets,
+        args,
+        public_data_loader,
+        round=None,
+        device="cpu",
+):
     for batch_idx, (x1, x2, target, _) in enumerate(public_data_loader):
         ensemble_feature = []
         x1 = x1.cuda()
@@ -293,7 +298,7 @@ def feature_distillation(
             net.eval()
             feature, proj1, pred1 = net(x1)
             ensemble_feature.append(feature.detach())
-        ensemble_feature = sum(ensemble_feature)/len(ensemble_feature)
+        ensemble_feature = sum(ensemble_feature) / len(ensemble_feature)
 
         for net_id, net in enumerate(nets.values()):
             kl_loss = torch.nn.MSELoss()
@@ -315,6 +320,7 @@ def feature_distillation(
             torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1, norm_type=2)
             optimizer.step()
 
+
 def p2p_train_nets(
         nets,
         args,
@@ -328,19 +334,18 @@ def p2p_train_nets(
         round=None,
         device="cpu",
 ):
-
     logger.info("Training {} networks".format(len(nets)))
-    iter_list =[]
+    iter_list = []
     for one in train_dl_local_dict:
         iter_list.append(len(train_dl_local_dict[one]))
-    iter_num = int(sum(iter_list)/len(iter_list))
-
+    iter_num = int(sum(iter_list) / len(iter_list))
 
     optimizer_dict = {}
     for net_id, net in nets.items():
         net.cuda()
         if args.optimizer == "adam":
-            optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, weight_decay=args.reg)
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr,
+                                   weight_decay=args.reg)
         elif args.optimizer == "amsgrad":
             optimizer = optim.Adam(
                 filter(lambda p: p.requires_grad, net.parameters()), lr=args.lr, weight_decay=args.reg, amsgrad=True
@@ -357,7 +362,7 @@ def p2p_train_nets(
     projection_dict = {}
     b_dict = {}
     w_dict = {}
-    loss_record = {i:[] for i in nets}
+    loss_record = {i: [] for i in nets}
     for batch_id in range(iter_num):
         for net_id, net in nets.items():
             net.train()
@@ -376,13 +381,13 @@ def p2p_train_nets(
             feature_original, _, _ = feature.split([x1.size(0), x2.size(0), random_x.size(0)], dim=0)
             # feature_dict[net_id] = feature_original
             projection_dict[net_id] = proj.detach()
-#            nt_local = nt_xent(proj_original, proj_pos, args.temperature)
+            #            nt_local = nt_xent(proj_original, proj_pos, args.temperature, device)
             if args.loss == "simclr":
-                nt_local = nt_xent(proj1_original, proj1_pos, args.temperature)
+                nt_local = nt_xent(proj_original, proj_pos, args.temperature, device)
             elif args.loss == "barlow":
-                nt_local = bt_loss(proj1_original, proj1_pos, args.lam)
+                nt_local = bt_loss(proj_original, proj_pos, args.lam, device)
             elif args.loss == "simsiam":
-                nt_local = ss_loss(proj1_original, proj1_pos)
+                nt_local = ss_loss(proj_original, proj_pos, device)
             loss_nt = nt_local
             js_local = js_loss(proj_original, proj_pos, proj_random, args.temperature, args.ts)
             loss_js = js_local
@@ -403,19 +408,19 @@ def p2p_train_nets(
                 b_avg = []
                 for net_id, b in b_dict.items():
                     b_avg.append(b)
-                b_avg = sum(b_avg)/len(b_avg)
+                b_avg = sum(b_avg) / len(b_avg)
                 for net_id, projection in projection_dict.items():
                     proj_label = torch.matmul(w_dict[net_id], b_avg)
                     loss_ours = kl_loss(projection, proj_label.detach())
-                    loss_dict[net_id] += 0.5*loss_ours
+                    loss_dict[net_id] += 0.5 * loss_ours
 
             else:
                 for net_id, projection in projection_dict.items():
                     for net_op, b_op in b_dict.items():
-                        if net_id!=net_op:
+                        if net_id != net_op:
                             proj_label = recreate_feature(projection, b_op)
                             loss_ours = kl_loss(projection, proj_label.detach())
-                            loss_dict[net_id] += 0.5*loss_ours
+                            loss_dict[net_id] += 0.5 * loss_ours
 
         for net_id, optimizer in optimizer_dict.items():
             loss_dict[net_id].backward()
@@ -425,23 +430,24 @@ def p2p_train_nets(
             nets[net_id].eval()
 
     for net_id, loss_list in loss_record.items():
-        loss_avg = sum(loss_list)/len(loss_list)
+        loss_avg = sum(loss_list) / len(loss_list)
         logger.info("Round: %d Client %d Loss: %f" % (round, net_id, loss_avg))
     logger.info(" ** Training complete **")
     return nets
 
+
 def local_train_net(
-    nets,
-    args,
-    net_dataidx_map,
-    train_dl_local_dict,
-    val_dl_local_dict,
-    train_dl=None,
-    test_dl=None,
-    global_model=None,
-    prev_model_pool=None,
-    round=None,
-    device="cpu",
+        nets,
+        args,
+        net_dataidx_map,
+        train_dl_local_dict,
+        val_dl_local_dict,
+        train_dl=None,
+        test_dl=None,
+        global_model=None,
+        prev_model_pool=None,
+        round=None,
+        device="cpu",
 ):
     if global_model:
         global_model.cuda()
@@ -452,34 +458,37 @@ def local_train_net(
         train_dl_local = train_dl_local_dict[net_id]
         val_dl_local = val_dl_local_dict[net_id]
         test_dl_local = test_dl[net_id]
-        op_net = nets[1-net_id]
+        op_net = nets[1 - net_id]
         # op_net = None
         train_net_fedx(
-        net_id,
-        net,
-        global_model,
-        train_dl_local,
-        val_dl_local,
-        test_dl_local,
-        n_epoch,
-        args.lr,
-        args.optimizer,
-        args.temperature,
-        args,
-        round,
-        device=device,
-        op_net = op_net,
+            net_id,
+            net,
+            global_model,
+            train_dl_local,
+            val_dl_local,
+            test_dl_local,
+            n_epoch,
+            args.lr,
+            args.optimizer,
+            args.temperature,
+            args,
+            round,
+            device=device,
+            op_net=op_net,
         )
 
     if global_model:
         global_model.to("cpu")
     return nets
 
+
 if __name__ == "__main__":
 
     # get_gpu_memory()
     args = get_args()
-    method_list = [(1,0,0,0,0),(0,1,0,0,0),(0,0,0,0,0),(0,0,1,0,0),(0,0,1,0,1),(0,0,1,1,0),(0,0,1,1,1)]
+    # method_list = [(1, 0, 0, 0, 0), (0, 1, 0, 0, 0), (0, 0, 0, 0, 0),
+    #                (0, 0, 1, 0, 0), (0, 0, 1, 0, 1), (0, 0, 1, 1, 0), (0, 0, 1, 1, 1)]
+    method_list = [(0, 0, 1, 0, 1)]  # basis_qr_avg
     for one in method_list[:]:
         args.aggregation, args.distillation, args.basis, args.svd, args.avg = one
         # Create directory to save log and model
@@ -505,7 +514,7 @@ if __name__ == "__main__":
         else:
             method = 'individual'
 
-        args.name = '{}_clients_{}_alpha_{}'.format(args.n_parties, args.beta, method)
+        args.name = '{}_clients_{}_alpha_{}_{}'.format(args.n_parties, args.beta, args.loss, method)
 
         save_dir = args.name + '/'
         model_dir = './models/' + save_dir
@@ -587,13 +596,15 @@ if __name__ == "__main__":
             #     train_dl_local, val_dl_local, _, _, _, _ = get_dataloader(
             #         args.dataset, args.datadir, args.batch_size // 2, args.batch_size * 2, dataidxs, target_transform=target_transform
             #     )
-            _, test_dl_local, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size //2, args.batch_size*2, net_dataidx_map['private_test'][net_id])
+            _, test_dl_local, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size // 2,
+                                                          args.batch_size * 2, net_dataidx_map['private_test'][net_id])
             train_dl_local_dict[net_id] = train_dl_local
             val_dl_local_dict[net_id] = val_dl_local
             test_dl_local_dict[net_id] = test_dl_local
             net_id += 1
 
-        public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size//2, args.batch_size * 2, net_dataidx_map['public'])
+        public_data_loader, _, _, _, _, _ = get_dataloader(args.dataset, args.datadir, args.batch_size // 2,
+                                                           args.batch_size * 2, net_dataidx_map['public'])
         # Main training communication loop.
         # state_dict = torch.load('./models/ckpt_1_self_teaching/local_model_0.pth')
         # nets[1].load_state_dict(state_dict)
@@ -610,6 +621,7 @@ if __name__ == "__main__":
 
             # Train local model with local data
             import time
+
             start_time = time.time()
             # if args.basis:
             nets = p2p_train_nets(
@@ -642,8 +654,8 @@ if __name__ == "__main__":
                     nets_this_round,
                     args,
                     public_data_loader,
-                    device = device,
-                    round = round
+                    device=device,
+                    round=round
                 )
 
             total_data_points = sum([len(net_dataidx_map[r]) for r in range(args.n_parties)])
@@ -665,7 +677,7 @@ if __name__ == "__main__":
             feature_distance = test_feature_distance(nets, test_dl)
             train_feature_distance = test_feature_distance(nets, public_data_loader)
 
-            if round % 5 == 0 or round > n_comm_rounds-5:
+            if round % 5 == 0 or round > n_comm_rounds - 5:
                 acc_list = []
 
                 if args.aggregation:
@@ -685,7 +697,6 @@ if __name__ == "__main__":
                 log_info['assemble_acc1'] = test_acc_1
                 log_info['assemble_acc5'] = test_acc_5
 
-
             log_info['public_feature_dis'] = train_feature_distance
             log_info['test_feature_dis'] = feature_distance
             log_info['round'] = round
@@ -702,8 +713,6 @@ if __name__ == "__main__":
             torch.save(global_model.state_dict(), args.modeldir + save_dir + "global_model.pth")
 
         else:
-            for net_id,  net in nets_this_round.items():
-                torch.save(net.state_dict(), args.modeldir + save_dir+ "local_model_{}".format(net_id) + ".pth")
+            for net_id, net in nets_this_round.items():
+                torch.save(net.state_dict(), args.modeldir + save_dir + "local_model_{}".format(net_id) + ".pth")
         wandb.finish()
-
-

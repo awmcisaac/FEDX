@@ -7,6 +7,7 @@ import torch.nn as nn
 
 from resnetcifar import ResNet18_cifar10, ResNet50_cifar10, ResNet18_MNIST
 
+
 class LeNet(nn.Module):
     def __init__(self):
         super(LeNet, self).__init__()
@@ -45,14 +46,14 @@ class ModelFedX(nn.Module):
         super(ModelFedX, self).__init__()
 
         if (
-            base_model == "resnet50-cifar10"
-            or base_model == "resnet50-cifar100"
-            or base_model == "resnet50-smallkernel"
-            or base_model == "resnet50"
+                base_model == "resnet50-cifar10"
+                or base_model == "resnet50-cifar100"
+                or base_model == "resnet50-smallkernel"
+                or base_model == "resnet50"
         ):
             basemodel = ResNet50_cifar10()
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
-            basemodel.fc.in_features
+            self.num_ftrs = basemodel.fc.in_features
         elif base_model == "resnet18-fmnist":
             basemodel = ResNet18_MNIST()
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
@@ -81,7 +82,7 @@ class ModelFedX(nn.Module):
             model = self.model_dict[model_name]
             return model
         except:
-            raise ("Invalid model name. Check the config file and pass one of: resnet18 or resnet50")
+            raise "Invalid model name. Check the config file and pass one of: resnet18 or resnet50"
 
     def forward(self, x):
         h = self.features(x)

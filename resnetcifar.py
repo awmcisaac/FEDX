@@ -33,15 +33,15 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(
-        self,
-        inplanes,
-        planes,
-        stride=1,
-        downsample=None,
-        groups=1,
-        base_width=64,
-        dilation=1,
-        norm_layer=None,
+            self,
+            inplanes,
+            planes,
+            stride=1,
+            downsample=None,
+            groups=1,
+            base_width=64,
+            dilation=1,
+            norm_layer=None,
     ):
         super(BasicBlock, self).__init__()
         if norm_layer is None:
@@ -88,15 +88,15 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(
-        self,
-        inplanes,
-        planes,
-        stride=1,
-        downsample=None,
-        groups=1,
-        base_width=64,
-        dilation=1,
-        norm_layer=None,
+            self,
+            inplanes,
+            planes,
+            stride=1,
+            downsample=None,
+            groups=1,
+            base_width=64,
+            dilation=1,
+            norm_layer=None,
     ):
         super(Bottleneck, self).__init__()
         if norm_layer is None:
@@ -138,15 +138,15 @@ class Bottleneck(nn.Module):
 
 class ResNetCifar10(nn.Module):
     def __init__(
-        self,
-        block,
-        layers,
-        num_classes=1000,
-        zero_init_residual=False,
-        groups=1,
-        width_per_group=64,
-        replace_stride_with_dilation=None,
-        norm_layer=None,
+            self,
+            block,
+            layers,
+            num_classes=1000,
+            zero_init_residual=False,
+            groups=1,
+            width_per_group=64,
+            replace_stride_with_dilation=None,
+            norm_layer=None,
     ):
         super(ResNetCifar10, self).__init__()
         if norm_layer is None:
@@ -257,15 +257,15 @@ class ResNetCifar10(nn.Module):
 
 class ResNetMNIST(nn.Module):
     def __init__(
-        self,
-        block,
-        layers,
-        num_classes=1000,
-        zero_init_residual=False,
-        groups=1,
-        width_per_group=64,
-        replace_stride_with_dilation=None,
-        norm_layer=None,
+            self,
+            block,
+            layers,
+            num_classes=1000,
+            zero_init_residual=False,
+            groups=1,
+            width_per_group=64,
+            replace_stride_with_dilation=None,
+            norm_layer=None,
     ):
         super(ResNetMNIST, self).__init__()
         if norm_layer is None:
@@ -373,6 +373,7 @@ class ResNetMNIST(nn.Module):
     def forward(self, x):
         return self._forward_impl(x)
 
+
 def ResNet18_cifar10(**kwargs):
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
@@ -382,6 +383,7 @@ def ResNet18_cifar10(**kwargs):
     """
     return ResNetCifar10(BasicBlock, [2, 2, 2, 2], **kwargs)
 
+
 def ResNet18_MNIST(**kwargs):
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
@@ -390,6 +392,7 @@ def ResNet18_MNIST(**kwargs):
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return ResNetMNIST(BasicBlock, [2, 2, 2, 2], **kwargs)
+
 
 def ResNet50_cifar10(**kwargs):
     r"""ResNet-50 model from
