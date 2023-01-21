@@ -75,6 +75,10 @@ CIFAR-10 experiments with 10 local clients
 python main.py --dataset cifar10 --batch-size 128 --n_parties 10 --logdir {path} --modeldir {path}
 ```
 
+CIFAR-10 experiments with different loss functions
+```
+python main.py --dataset cifar10 --model resnet18 --loss barlow --batch-size 32 --n_parties 10 --epochs 10 --comm_round 101
+```
 
 ## Citation ##
 If you find this repo useful for your research, please consider citing our paper:
