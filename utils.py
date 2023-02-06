@@ -80,8 +80,6 @@ def load_cifar100_data(datadir):
     return (X_train, y_train, X_test, y_test)
 
 
-
-
 def load_mnist_data(datadir):
 
     transform = transforms.Compose([transforms.ToTensor()])
@@ -201,7 +199,6 @@ class Net(nn.Module):
         return out
 
 
-
 def save_feature_bank(net, memory_data_loader, test_data_loader, name):
     net.eval()
     feature_bank = []
@@ -227,7 +224,8 @@ def save_feature_bank(net, memory_data_loader, test_data_loader, name):
     torch.save(linear_ds, name+'train.pth')
     torch.save(test_ds, name +'test.pth')
 
-def test_featrue_bank(name, feature_size, label_size):
+
+def test_feature_bank(name, feature_size, label_size):
 
     seed = 0
     np.random.seed(seed)
@@ -283,6 +281,7 @@ def test_feature_distance(nets, test_data_loader):
                 loss_list.append(loss(one, avg_feature))
 
     return sum(loss_list)/len(loss_list)
+
 
 def asemble_test(nets, memory_data_loader, test_data_loader):
 
@@ -354,10 +353,11 @@ def asemble_test(nets, memory_data_loader, test_data_loader):
     return total_correct_1 / total_num * 100, total_correct_5 / total_num * 100
 
 
-
-
 def test_linear_fedX(net, memory_data_loader, test_data_loader):
     """Linear evaluation code for FedX"""
+    # NOTE: for semi-supervised extension (Section 4.4), we must
+    # modify this to only use a fraction of the data here
+
     net.cuda()
     net.eval()
     feature_bank = []
