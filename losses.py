@@ -44,7 +44,7 @@ def bt_loss(x1, x2, l=1, device="cpu"):
 
 def ss_loss(x1, x2, device="cpu"):
     """SimSiam loss objective function"""
-    return NotImplementedError
+    return -F.cosine_similarity(x1, x2.detach(), dim=-1).mean() / 2
 
 def js_loss(x1, x2, xa, t=0.1, t2=0.01, device="cpu"):
     """Relational loss objective function

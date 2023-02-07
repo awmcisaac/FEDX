@@ -206,7 +206,7 @@ def save_feature_bank(net, memory_data_loader, test_data_loader, name):
     # Save training data's embeddings into the feature_bank.
     with torch.no_grad():
         for data, _, target, _ in memory_data_loader:
-            feature, _, _ = net(data.cuda(non_blocking=True))
+            feature, _, _, _ = net(data.cuda(non_blocking=True))
             feature_bank.append(feature)
         feature_bank = torch.cat(feature_bank, dim=0).contiguous().cuda()
         feature_labels = torch.tensor(memory_data_loader.dataset.target, device=feature_bank.device)
@@ -214,7 +214,7 @@ def save_feature_bank(net, memory_data_loader, test_data_loader, name):
     test_bank = []
     with torch.no_grad():
         for data, _, target, _ in test_data_loader:
-            feature, _, _ = net(data.cuda(non_blocking=True))
+            feature, _, _, _ = net(data.cuda(non_blocking=True))
             test_bank.append(feature)
         test_bank = torch.cat(test_bank, dim=0).contiguous().cuda()
         test_labels = torch.tensor(test_data_loader.dataset.target, device=test_bank.device)
@@ -273,7 +273,7 @@ def test_feature_distance(nets, test_data_loader):
         for data, _, target, _ in test_data_loader:
             feature_list = []
             for net_id, net in nets.items():
-                feature, proj, pred = net(data.cuda(non_blocking = True))
+                feature, proj, pred, _ = net(data.cuda(non_blocking = True))
                 feature_list.append(feature.detach())
             avg_feature = sum(feature_list)/len(feature_list)
             loss_list = []
@@ -296,7 +296,7 @@ def asemble_test(nets, memory_data_loader, test_data_loader):
             label_bank.append(target)
             feature_tep = []
             for net in nets.values():
-                feature, _, _ = net(data.cuda(non_blocking=True))
+                feature, _, _, _ = net(data.cuda(non_blocking=True))
                 feature_tep.append(feature.detach())
             feature_asemble = sum(feature_tep)/len(feature_tep)
             feature_bank.append(feature_asemble)
@@ -312,7 +312,7 @@ def asemble_test(nets, memory_data_loader, test_data_loader):
             feature_tep = []
             label_bank_test.append(target)
             for net in nets.values():
-                feature, _, _ = net(data.cuda(non_blocking = True))
+                feature, _, _, _ = net(data.cuda(non_blocking = True))
                 feature_tep.append(feature.detach())
             feature_asemble = sum(feature_tep)/len(feature_tep)
             feature_bank_test.append(feature_asemble)
@@ -365,7 +365,7 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
     # Save training data's embeddings into the feature_bank.
     with torch.no_grad():
         for data, _, target, _ in memory_data_loader:
-            feature, _, _ = net(data.cuda(non_blocking=True))
+            feature, _, _, _ = net(data.cuda(non_blocking=True))
             feature_bank.append(feature)
         feature_bank = torch.cat(feature_bank, dim=0).contiguous().cuda()
         feature_labels = torch.tensor(memory_data_loader.dataset.target, device=feature_bank.device)
@@ -377,7 +377,7 @@ def test_linear_fedX(net, memory_data_loader, test_data_loader):
     feature_bank_test = []
     with torch.no_grad():
         for data, _, target, _ in test_data_loader:
-            feature_test, _, _ = net(data.cuda(non_blocking=True))
+            feature_test, _, _, _ = net(data.cuda(non_blocking=True))
             feature_bank_test.append(feature_test)
         feature_bank_test = torch.cat(feature_bank_test, dim=0).contiguous().cuda()
         feature_labels_test = torch.tensor(test_data_loader.dataset.target, device=feature_bank_test.device)
