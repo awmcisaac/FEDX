@@ -7,6 +7,7 @@ import torch.nn as nn
 
 from resnetcifar import ResNet18_cifar10, ResNet50_cifar10, ResNet18_MNIST
 
+
 class LeNet(nn.Module):
     def __init__(self):
         super(LeNet, self).__init__()
@@ -41,18 +42,18 @@ class LeNet(nn.Module):
 
 
 class ModelFedX(nn.Module):
-    def __init__(self, base_model, out_dim, net_configs=None):
+    def __init__(self, base_model, out_dim, net_configs=None, loss=None):
         super(ModelFedX, self).__init__()
-
+        
         if (
-            base_model == "resnet50-cifar10"
-            or base_model == "resnet50-cifar100"
-            or base_model == "resnet50-smallkernel"
-            or base_model == "resnet50"
+                base_model == "resnet50-cifar10"
+                or base_model == "resnet50-cifar100"
+                or base_model == "resnet50-smallkernel"
+                or base_model == "resnet50"
         ):
             basemodel = ResNet50_cifar10()
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
-            basemodel.fc.in_features
+            self.num_ftrs = basemodel.fc.in_features
         elif base_model == "resnet18-fmnist":
             basemodel = ResNet18_MNIST()
             self.features = nn.Sequential(*list(basemodel.children())[:-1])
@@ -66,8 +67,10 @@ class ModelFedX(nn.Module):
 
         self.projectionMLP = nn.Sequential(
             nn.Linear(self.num_ftrs, out_dim),
+            nn.BatchNorm1d(out_dim),
             nn.ReLU(inplace=True),
             nn.Linear(out_dim, out_dim),
+            nn.BatchNorm1d(out_dim)
         )
 
         self.predictionMLP = nn.Sequential(
@@ -75,13 +78,21 @@ class ModelFedX(nn.Module):
             # nn.ReLU(inplace=True),
             # nn.Linear(out_dim, out_dim),
         )
+        self.simsiampredictionMLP = lambda x: x
+        if loss == 'simsiam':
+            self.simsiampredictionMLP = nn.Sequential(
+            nn.Linear(out_dim, out_dim // 2),
+            nn.BatchNorm1d(out_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Linear(out_dim // 2, out_dim)
+        )
 
     def _get_basemodel(self, model_name):
         try:
             model = self.model_dict[model_name]
             return model
         except:
-            raise ("Invalid model name. Check the config file and pass one of: resnet18 or resnet50")
+            raise "Invalid model name. Check the config file and pass one of: resnet18 or resnet50"
 
     def forward(self, x):
         h = self.features(x)
@@ -91,16 +102,17 @@ class ModelFedX(nn.Module):
 
         proj = self.projectionMLP(h)
         pred = self.predictionMLP(proj)
-        return h, proj, pred
+        predsiam = self.simsiampredictionMLP(proj)
+        return h, proj, pred, predsiam
 
 
-def init_nets(net_configs, n_parties, args, device="cpu"):
+def init_nets(net_configs, n_parties, args, device="cpu", loss=None):
     nets = {net_i: None for net_i in range(n_parties)}
     for net_i in range(n_parties):
         if args.model == 'lenet':
             net = LeNet()
         else:
-            net = ModelFedX(args.model, args.out_dim, net_configs)
+            net = ModelFedX(args.model, args.out_dim, net_configs, loss)
         net = net.cuda()
         nets[net_i] = net
 
